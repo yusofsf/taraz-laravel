@@ -1,4 +1,34 @@
 <?php
+
 namespace App\Models;
+
+use App\Support\Jalali;
 use Illuminate\Database\Eloquent\Model;
-class BalanceChange extends Model { protected $fillable=['product_id','user_id','change_amount','previous_quantity','new_quantity','note']; public function product(){return $this->belongsTo(Product::class);} public function user(){return $this->belongsTo(User::class);} }
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+
+class BalanceChange extends Model
+{
+    protected $fillable = ['product_id', 'user_id', 'person_id', 'change_amount', 'previous_quantity', 'new_quantity', 'note'];
+
+    protected $appends = ['created_at_jalali'];
+
+    public function product(): BelongsTo
+    {
+        return $this->belongsTo(Product::class);
+    }
+
+    public function user(): BelongsTo
+    {
+        return $this->belongsTo(User::class);
+    }
+
+    public function person(): BelongsTo
+    {
+        return $this->belongsTo(Person::class);
+    }
+
+    public function getCreatedAtJalaliAttribute(): ?string
+    {
+        return Jalali::format($this->created_at);
+    }
+}

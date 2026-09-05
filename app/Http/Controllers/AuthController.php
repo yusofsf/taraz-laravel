@@ -1,4 +1,64 @@
 <?php
+
 namespace App\Http\Controllers;
-use App\Models\User; use Illuminate\Http\Request; use Illuminate\Support\Facades\Hash;
-class AuthController extends Controller { public function login(Request $r){$d=$r->validate(['mobile'=>'required','password'=>'required']);$u=User::where('mobile',$d['mobile'])->first();if(!$u||!Hash::check($d['password'],$u->password))return response()->json(['message'=>'شماره موبایل یا رمز نادرست است.'],422);$r->session()->put('user_id',$u->id);return $u;} public function logout(Request $r){$r->session()->invalidate();return response()->noContent();} public function me(Request $r){return User::findOrFail($r->session()->get('user_id'));} public function profile(Request $r){$d=$r->validate(['name'=>'required','password'=>'nullable|min:9']);$u=User::findOrFail($r->session()->get('user_id'));$u->name=$d['name'];if(!empty($d['password']))$u->password=Hash::make($d['password']);$u->save();return $u;} }
+
+use App\Models\User;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Illuminate\Http\Response;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Validation\Rule;
+
+class AuthController extends Controller
+{
+    public function login(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'mobile' => 'required|string|max:11',
+            'password' => 'required|string|max:100',
+        ]);
+
+        $user = User::where('mobile', $data['mobile'])->first();
+        if (! $user || ! Hash::check($data['password'], $user->password)) {
+            return response()->json(['message' => 'شماره موبایل یا رمز نادرست است.'], 422);
+        }
+
+        $request->session()->regenerate();
+        $request->session()->put('user_id', $user->id);
+
+        return response()->json($user);
+    }
+
+    public function logout(Request $request): Response
+    {
+        $request->session()->invalidate();
+        $request->session()->regenerateToken();
+
+        return response()->noContent();
+    }
+
+    public function me(Request $request): JsonResponse
+    {
+        return response()->json(User::findOrFail($request->session()->get('user_id')));
+    }
+
+    public function profile(Request $request): JsonResponse
+    {
+        $user = User::findOrFail($request->session()->get('user_id'));
+
+        $data = $request->validate([
+            'name' => 'required|string|max:100',
+            'mobile' => ['required', 'regex:/^09[0-9]{9}$/', Rule::unique('users', 'mobile')->ignore($user->id)],
+            'password' => 'nullable|string|min:9|max:100',
+        ]);
+
+        $user->name = $data['name'];
+        $user->mobile = $data['mobile'];
+        if (! empty($data['password'])) {
+            $user->password = Hash::make($data['password']);
+        }
+        $user->save();
+
+        return response()->json($user);
+    }
+}
