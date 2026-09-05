@@ -1,0 +1,3 @@
+<?php
+use Illuminate\Database\Migrations\Migration; use Illuminate\Database\Schema\Blueprint; use Illuminate\Support\Facades\Schema;
+return new class extends Migration { public function up():void{Schema::table('users',function(Blueprint $t){$t->string('mobile',11)->unique()->after('name');$t->boolean('is_admin')->default(false);$t->boolean('can_add_users')->default(false);$t->boolean('can_add_products')->default(false);$t->boolean('can_change_balance')->default(false);});} public function down():void{Schema::table('users',fn(Blueprint $t)=>$t->dropColumn(['mobile','is_admin','can_add_users','can_add_products','can_change_balance']));} };

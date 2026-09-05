@@ -1,0 +1,4 @@
+<?php
+namespace App\Http\Controllers;
+use App\Models\User; use Illuminate\Http\Request; use Illuminate\Support\Facades\Hash;
+class AuthController extends Controller { public function login(Request $r){$d=$r->validate(['mobile'=>'required','password'=>'required']);$u=User::where('mobile',$d['mobile'])->first();if(!$u||!Hash::check($d['password'],$u->password))return response()->json(['message'=>'شماره موبایل یا رمز نادرست است.'],422);$r->session()->put('user_id',$u->id);return $u;} public function logout(Request $r){$r->session()->invalidate();return response()->noContent();} public function me(Request $r){return User::findOrFail($r->session()->get('user_id'));} public function profile(Request $r){$d=$r->validate(['name'=>'required','password'=>'nullable|min:9']);$u=User::findOrFail($r->session()->get('user_id'));$u->name=$d['name'];if(!empty($d['password']))$u->password=Hash::make($d['password']);$u->save();return $u;} }
