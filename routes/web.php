@@ -24,11 +24,15 @@ Route::middleware('web.auth')->group(function () {
     Route::delete('/api/products/{product}', [ProductController::class, 'destroy'])->middleware('permission:can_add_products');
     Route::get('/api/history', [ProductController::class, 'history']);
     Route::get('/api/history/options', [ProductController::class, 'historyOptions']);
+    Route::put('/api/history/{change}', [ProductController::class, 'updateChange'])->middleware('permission:can_edit_history');
+    Route::delete('/api/history/{change}', [ProductController::class, 'destroyChange'])->middleware('permission:can_delete_history');
     Route::get('/api/products/{product}/history', function (Product $product) {
         return BalanceChange::with(['user:id,name', 'person:id,name'])->where('product_id', $product->id)->latest()->get();
     });
     Route::get('/api/persons', [PersonController::class, 'index']);
-    Route::post('/api/persons', [PersonController::class, 'store'])->middleware('permission:can_change_balance');
+    Route::post('/api/persons', [PersonController::class, 'store'])->middleware('permission:can_edit_persons');
+    Route::put('/api/persons/{person}', [PersonController::class, 'update'])->middleware('permission:can_edit_persons');
+    Route::delete('/api/persons/{person}', [PersonController::class, 'destroyPerson'])->middleware('permission:can_delete_persons');
     Route::get('/api/users', [UserController::class, 'index'])->middleware('permission:can_add_users');
     Route::post('/api/users', [UserController::class, 'store'])->middleware('permission:can_add_users');
     Route::put('/api/users/{user}', [UserController::class, 'update'])->middleware('permission:can_manage_permissions');

@@ -8,6 +8,10 @@ const PERMISSIONS = [
   ['can_add_products', 'افزودن کالا'],
   ['can_edit_products', 'ویرایش کالاها'],
   ['can_change_balance', 'تغییر تراز'],
+  ['can_edit_history', 'ویرایش تاریخچه تراز'],
+  ['can_delete_history', 'حذف تاریخچه تراز'],
+  ['can_edit_persons', 'افزودن و ویرایش اشخاص'],
+  ['can_delete_persons', 'حذف اشخاص'],
   ['can_manage_permissions', 'مدیریت دسترسی‌ها'],
 ]
 
@@ -57,7 +61,7 @@ const fmt = (x) => +(+x).toFixed(3)
 const EMPTY_PRODUCT = { name: '', sku: '', quantity: 0, unit: 'عدد' }
 const EMPTY_CHANGE = { product_id: '', amount: '', note: '', person_id: '' }
 const EMPTY_PERSON = { name: '', mobile: '', note: '' }
-const EMPTY_USER = { name: '', mobile: '', can_add_users: false, can_add_products: false, can_edit_products: false, can_change_balance: false, can_manage_permissions: false }
+const EMPTY_USER = { name: '', mobile: '', can_add_users: false, can_add_products: false, can_edit_products: false, can_change_balance: false, can_edit_history: false, can_delete_history: false, can_edit_persons: false, can_delete_persons: false, can_manage_permissions: false }
 
 function BalanceLineChart({ items }) {
   const data = [...items].reverse().map((item, index) => ({
@@ -119,7 +123,7 @@ function App() {
         {page === 'داشبورد' && <Dashboard user={user} />}
         {page === 'کالاها' && <Products user={user} ok={setMsg} />}
         {page === 'ویرایش کالاها' && <EditProducts user={user} ok={setMsg} />}
-        {page === 'تاریخچه' && <History />}
+        {page === 'تاریخچه' && <History user={user} ok={setMsg} />}
         {page === 'اشخاص' && <Persons user={user} ok={setMsg} />}
         {page === 'کاربران' && <Users user={user} ok={setMsg} />}
         {page === 'مشخصات' && <Profile user={user} reload={load} ok={setMsg} />}
@@ -375,12 +379,17 @@ function EditProducts({ ok }) {
   )
 }
 
-function History() {
+function History({ user, ok }) {
   const [items, setItems] = useState([])
   const [options, setOptions] = useState({ users: [], products: [] })
+  const [persons, setPersons] = useState([])
   const [filters, setFilters] = useState({ from: '', to: '', user_id: '', product_id: '' })
+  const [editing, setEditing] = useState(null)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+
+  const canEdit = user.is_admin || user.can_edit_history
+  const canDelete = user.is_admin || user.can_delete_history
 
   const load = () => {
     if (busy) return Promise.resolve()
@@ -398,7 +407,25 @@ function History() {
   useEffect(() => {
     load()
     api('/api/history/options').then(setOptions).catch(() => {})
+    if (canEdit) api('/api/persons').then(setPersons).catch(() => setPersons([]))
   }, [])
+
+  const remove = (item) => {
+    if (!window.confirm('این رکورد از تاریخچه حذف شود؟ تراز کالا و شخص به حالت قبل برمی‌گردد.')) return
+    api(`/api/history/${item.id}`, { method: 'DELETE' })
+      .then(() => { ok('رکورد حذف شد.'); load() })
+      .catch((x) => setError(x.message))
+  }
+
+  const saveEdit = (e) => {
+    e.preventDefault()
+    if (busy) return
+    setBusy(true)
+    api(`/api/history/${editing.id}`, { method: 'PUT', body: { amount: +editing.change_amount, note: editing.note, person_id: editing.person_id || null } })
+      .then(() => { setEditing(null); ok('رکورد ویرایش شد.'); load() })
+      .catch((x) => setError(x.message))
+      .finally(() => setBusy(false))
+  }
 
   return (
     <>
@@ -425,19 +452,44 @@ function History() {
       <div className="panel">
         <div className="panel-title"><span>ریز تغییرات</span><small>{items.length} مورد</small></div>
         <table>
-          <thead><tr><th>تاریخ</th><th>کالا</th><th>شخص</th><th>کاربر</th><th>تغییر</th><th>تراز</th></tr></thead>
+          <thead><tr><th>تاریخ</th><th>کالا</th><th>شخص</th><th>کاربر</th><th>تغییر</th><th>تراز</th>{(canEdit || canDelete) && <th>عملیات</th>}</tr></thead>
           <tbody>
             {items.map((item) => (
-              <tr key={item.id}>
-                <td>{item.created_at_jalali}</td>
-                <td>{item.product?.name || '—'}</td>
-                <td>{item.person?.name || '—'}</td>
-                <td>{item.user?.name || '—'}</td>
-                <td className={item.change_amount > 0 ? 'up' : 'down'}>{item.change_amount > 0 ? '+' : ''}{fmt(item.change_amount)}</td>
-                <td>{fmt(item.new_quantity)}</td>
-              </tr>
+              editing?.id === item.id
+                ? (
+                    <tr key={item.id}>
+                      <td colSpan={canEdit || canDelete ? 7 : 6}>
+                        <form className="form" onSubmit={saveEdit}>
+                          <input required type="number" step="any" value={editing.change_amount} onChange={(e) => setEditing({ ...editing, change_amount: e.target.value })} />
+                          <select value={editing.person_id || ''} onChange={(e) => setEditing({ ...editing, person_id: e.target.value })}>
+                            <option value="">بدون شخص (تعدیل کلی)</option>
+                            {persons.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                          </select>
+                          <input placeholder="یادداشت" value={editing.note || ''} onChange={(e) => setEditing({ ...editing, note: e.target.value })} />
+                          <button disabled={busy}>ذخیره</button>
+                          <button type="button" className="ghost" onClick={() => setEditing(null)}>انصراف</button>
+                        </form>
+                      </td>
+                    </tr>
+                  )
+                : (
+                    <tr key={item.id}>
+                      <td>{item.created_at_jalali}</td>
+                      <td>{item.product?.name || '—'}</td>
+                      <td>{item.person?.name || '—'}</td>
+                      <td>{item.user?.name || '—'}</td>
+                      <td className={item.change_amount > 0 ? 'up' : 'down'}>{item.change_amount > 0 ? '+' : ''}{fmt(item.change_amount)}</td>
+                      <td>{fmt(item.new_quantity)}</td>
+                      {(canEdit || canDelete) && (
+                        <td>
+                          {canEdit && <button type="button" onClick={() => setEditing({ ...item, person_id: item.person?.id || '' })}>ویرایش</button>}
+                          {canDelete && <button type="button" className="ghost" onClick={() => remove(item)}>حذف</button>}
+                        </td>
+                      )}
+                    </tr>
+                  )
             ))}
-            {!items.length && <tr><td colSpan="6" className="empty-row">داده‌ای برای این فیلترها وجود ندارد.</td></tr>}
+            {!items.length && <tr><td colSpan={canEdit || canDelete ? 7 : 6} className="empty-row">داده‌ای برای این فیلترها وجود ندارد.</td></tr>}
           </tbody>
         </table>
       </div>
@@ -450,13 +502,24 @@ const statusClass = (status) => (status === 'بدهکار' ? 'debtor' : status =
 function Persons({ user, ok }) {
   const [persons, setPersons] = useState([])
   const [form, setForm] = useState(EMPTY_PERSON)
+  const [editing, setEditing] = useState(null)
+  const [search, setSearch] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
 
-  const load = () => api('/api/persons').then(setPersons)
+  const canEdit = user.is_admin || user.can_edit_persons
+  const canDelete = user.is_admin || user.can_delete_persons
+
+  const load = (q = search) => {
+    const query = q ? `?q=${encodeURIComponent(q)}` : ''
+    return api(`/api/persons${query}`).then(setPersons).catch(() => setPersons([]))
+  }
   useEffect(() => { load() }, [])
 
-  const canAdd = user.is_admin || user.can_change_balance
+  const submitSearch = (e) => {
+    e.preventDefault()
+    load()
+  }
 
   const submit = (e) => {
     e.preventDefault()
@@ -466,6 +529,23 @@ function Persons({ user, ok }) {
       .then(() => { setForm(EMPTY_PERSON); load(); ok('شخص اضافه شد.') })
       .catch((x) => setError(x.message))
       .finally(() => setBusy(false))
+  }
+
+  const saveEdit = (e) => {
+    e.preventDefault()
+    if (busy) return
+    setBusy(true)
+    api(`/api/persons/${editing.id}`, { method: 'PUT', body: { name: editing.name, mobile: editing.mobile, note: editing.note } })
+      .then(() => { setEditing(null); load(); ok('اطلاعات شخص ذخیره شد.') })
+      .catch((x) => setError(x.message))
+      .finally(() => setBusy(false))
+  }
+
+  const remove = (person) => {
+    if (!window.confirm(`«${person.name}» حذف شود؟`)) return
+    api(`/api/persons/${person.id}`, { method: 'DELETE' })
+      .then(() => { load(); ok('شخص حذف شد.') })
+      .catch((x) => setError(x.message))
   }
 
   const counts = persons.reduce((acc, p) => {
@@ -479,7 +559,7 @@ function Persons({ user, ok }) {
   return (
     <>
       <Msg x={error} />
-      {canAdd && (
+      {canEdit && (
         <div className="panel">
           <h3>افزودن شخص</h3>
           <form className="form" onSubmit={submit}>
@@ -491,26 +571,54 @@ function Persons({ user, ok }) {
         </div>
       )}
       <div className="panel">
-        <div className="panel-title"><span>اشخاص و تراز آن‌ها</span><small>{persons.length} شخص · {summary}</small></div>
+        <div className="panel-title">
+          <span>اشخاص و تراز آن‌ها</span>
+          <small>{persons.length} شخص · {summary}</small>
+        </div>
+        <form className="form" onSubmit={submitSearch}>
+          <input placeholder="جست‌وجو بر اساس نام یا شماره موبایل" value={search} onChange={(e) => setSearch(e.target.value)} />
+          <button disabled={busy}>جست‌وجو</button>
+        </form>
         {persons.length
           ? (
               <div className="product-balance">
                 {persons.map((person) => (
                   <article key={person.id}>
                     <div>
-                      <strong>{person.name}{person.status && <span className={`badge ${statusClass(person.status)}`}>{person.status}</span>}</strong>
-                      <small>{person.mobile || 'بدون موبایل'}</small>
-                      {person.products?.length
+                      {editing?.id === person.id
                         ? (
-                            <div className="chips">
-                              {person.products.map((product) => (
-                                <span className={`chip ${statusClass(product.status)}`} key={product.id}>
-                                  {product.name}: {fmt(product.quantity)} {product.unit || ''} · {product.status}
-                                </span>
-                              ))}
-                            </div>
+                            <form className="form" onSubmit={saveEdit}>
+                              <input required placeholder="نام شخص" value={editing.name} onChange={(e) => setEditing({ ...editing, name: e.target.value })} />
+                              <input placeholder="موبایل (اختیاری)" value={editing.mobile || ''} onChange={(e) => setEditing({ ...editing, mobile: e.target.value })} />
+                              <input placeholder="یادداشت" value={editing.note || ''} onChange={(e) => setEditing({ ...editing, note: e.target.value })} />
+                              <button disabled={busy}>ذخیره</button>
+                              <button type="button" className="ghost" onClick={() => setEditing(null)}>انصراف</button>
+                            </form>
                           )
-                        : <small>ترازی ثبت نشده</small>}
+                        : (
+                            <>
+                              <strong>{person.name}{person.status && <span className={`badge ${statusClass(person.status)}`}>{person.status}</span>}</strong>
+                              <small>{person.mobile || 'بدون موبایل'}</small>
+                              {person.note && <small>{person.note}</small>}
+                              {(canEdit || canDelete) && (
+                                <div className="chips">
+                                  {canEdit && <button type="button" onClick={() => setEditing({ ...person })}>ویرایش</button>}
+                                  {canDelete && <button type="button" className="ghost" onClick={() => remove(person)}>حذف</button>}
+                                </div>
+                              )}
+                              {person.products?.length
+                                ? (
+                                    <div className="chips">
+                                      {person.products.map((product) => (
+                                        <span className={`chip ${statusClass(product.status)}`} key={product.id}>
+                                          {product.name}: {fmt(product.quantity)} {product.unit || ''} · {product.status}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  )
+                                : <small>ترازی ثبت نشده</small>}
+                            </>
+                          )}
                     </div>
                   </article>
                 ))}

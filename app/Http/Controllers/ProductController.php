@@ -9,6 +9,7 @@ use App\Models\User;
 use App\Support\Jalali;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\Response;
 use Illuminate\Support\Facades\DB;
 
 class ProductController extends Controller
@@ -123,6 +124,114 @@ class ProductController extends Controller
         }
 
         return response()->json($query->get());
+    }
+
+    /**
+     * Edits a history record: mirrors the amount/person change on the
+     * product and person balances, then rebuilds the running quantities.
+     */
+    public function updateChange(Request $request, BalanceChange $change): JsonResponse
+    {
+        $product = $change->product;
+
+        $data = $request->validate([
+            'amount' => $this->quantityRule($product->unit).'|not_in:0',
+            'note' => 'nullable|string|max:200',
+            'person_id' => 'nullable|integer|exists:persons,id',
+        ]);
+
+        return response()->json(DB::transaction(function () use ($data, $change, $product) {
+            $newAmount = (float) $data['amount'];
+            $product->increment('quantity', $newAmount - $change->change_amount);
+
+            $this->movePersonBalance($change, $newAmount, $data['person_id'] ?? null);
+
+            $change->update([
+                'person_id' => $data['person_id'] ?? null,
+                'change_amount' => $newAmount,
+                'new_quantity' => $change->previous_quantity + $newAmount,
+                'note' => $data['note'] ?? null,
+            ]);
+
+            $this->recomputeProductHistory($product);
+
+            return $change;
+        }));
+    }
+
+    /**
+     * Deletes a history record and rolls its effect back on the product
+     * and person balances, then rebuilds the running quantities.
+     */
+    public function destroyChange(BalanceChange $change): Response
+    {
+        $product = $change->product;
+
+        DB::transaction(function () use ($change, $product) {
+            $product->decrement('quantity', $change->change_amount);
+
+            if ($change->person_id) {
+                $this->adjustPersonBalance($change->person_id, $product->id, -$change->change_amount);
+            }
+
+            $change->delete();
+            $this->recomputeProductHistory($product);
+        });
+
+        return response()->noContent();
+    }
+
+    /**
+     * Applies the difference caused by editing a record: takes the old
+     * amount back from the old person and gives the new amount to the
+     * new person.
+     */
+    private function movePersonBalance(BalanceChange $change, float $newAmount, ?int $newPersonId): void
+    {
+        $oldPersonId = $change->person_id;
+
+        if ($oldPersonId !== null && $oldPersonId !== $newPersonId) {
+            $this->adjustPersonBalance($oldPersonId, $change->product_id, -$change->change_amount);
+        }
+
+        if ($newPersonId !== null && $newPersonId !== $oldPersonId) {
+            $this->adjustPersonBalance($newPersonId, $change->product_id, $newAmount);
+        } elseif ($newPersonId !== null) {
+            $this->adjustPersonBalance($newPersonId, $change->product_id, $newAmount - $change->change_amount);
+        }
+    }
+
+    private function adjustPersonBalance(int $personId, int $productId, float $delta): void
+    {
+        $personProduct = PersonProduct::firstOrCreate(
+            ['person_id' => $personId, 'product_id' => $productId],
+            ['quantity' => 0]
+        );
+        $personProduct->increment('quantity', $delta);
+    }
+
+    /**
+     * Rebuilds previous/new quantities of the whole product chain so the
+     * records stay consistent after an edit or delete. The base is derived
+     * from the product's actual balance minus the sum of all changes.
+     */
+    private function recomputeProductHistory(Product $product): void
+    {
+        $changes = BalanceChange::where('product_id', $product->id)
+            ->orderBy('created_at')
+            ->orderBy('id')
+            ->get();
+
+        $running = (float) $product->quantity - (float) $changes->sum('change_amount');
+
+        foreach ($changes as $change) {
+            $previous = $running;
+            $running = $previous + (float) $change->change_amount;
+
+            if ((float) $change->previous_quantity !== $previous || (float) $change->new_quantity !== $running) {
+                $change->forceFill(['previous_quantity' => $previous, 'new_quantity' => $running])->save();
+            }
+        }
     }
 
     public function dashboard(): array

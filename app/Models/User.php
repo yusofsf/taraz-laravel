@@ -15,7 +15,8 @@ class User extends Authenticatable
     protected $fillable = [
         'name', 'email', 'mobile', 'password', 'is_admin',
         'can_add_users', 'can_add_products', 'can_edit_products',
-        'can_change_balance', 'can_manage_permissions',
+        'can_change_balance', 'can_edit_history', 'can_delete_history',
+        'can_edit_persons', 'can_delete_persons', 'can_manage_permissions',
     ];
 
     protected $hidden = ['password', 'remember_token'];
