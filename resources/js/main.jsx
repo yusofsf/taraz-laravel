@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import './style.css'
@@ -15,7 +15,10 @@ const PERMISSIONS = [
   ['can_manage_permissions', 'مدیریت دسترسی‌ها'],
 ]
 
-const UNITS = ['عدد', 'گرم', 'مثقال', 'انس']
+const UNITS = ['عدد', 'گرم', 'مثقال', 'انس', 'کاغذ', 'ریال']
+const DIRECTIONS = ['خرید', 'فروش']
+const SETTLEMENT_METHODS = ['حواله', 'کاغذ', 'ریال']
+const GRANULARITIES = [['day', 'روز'], ['hour', 'ساعت'], ['minute', 'دقیقه']]
 
 const csrfMeta = () => document.querySelector('meta[name=csrf-token]')
 
@@ -59,16 +62,18 @@ const Msg = ({ x }) => x && <p className="msg">{x}</p>
 const fmt = (x) => +(+x).toFixed(3)
 
 const EMPTY_PRODUCT = { name: '', sku: '', quantity: 0, unit: 'عدد' }
-const EMPTY_CHANGE = { product_id: '', amount: '', note: '', person_id: '' }
+const EMPTY_CHANGE = { product_id: '', direction: 'خرید', quantity: '', unit_price: '', settlement_method: 'کاغذ', settlement_medium: 'ریال', settlement_date: '', person_id: '', from_person_id: '', to_person_id: '', note: '' }
 const EMPTY_PERSON = { name: '', mobile: '', note: '' }
 const EMPTY_USER = { name: '', mobile: '', can_add_users: false, can_add_products: false, can_edit_products: false, can_change_balance: false, can_edit_history: false, can_delete_history: false, can_edit_persons: false, can_delete_persons: false, can_manage_permissions: false }
 
-function BalanceLineChart({ items }) {
-  const data = [...items].reverse().map((item, index) => ({
-    name: item.created_at_jalali?.slice(0, 10) || String(index + 1),
-    change: item.change_amount,
-    balance: item.new_quantity,
-  }))
+function BalanceLineChart({ items, granularity = 'day' }) {
+  const data = useMemo(() => [...items].reverse().map((item) => {
+    const date = item.created_at ? new Date(item.created_at) : null
+    let name = item.created_at_jalali?.slice(0, 10) || ''
+    if (date && granularity === 'hour') name += ` ${String(date.getHours()).padStart(2, '0')}:00`
+    if (date && granularity === 'minute') name += ` ${item.created_at_jalali?.slice(-5) || ''}`
+    return { name, change: item.change_amount, balance: item.new_quantity }
+  }), [items, granularity])
 
   return (
     <div className="chart">
@@ -98,6 +103,7 @@ function App() {
 
   const can = (perm) => user.is_admin || user[perm]
   const nav = ['داشبورد',
+    'فاکتورهای امروز',
     ...(can('can_add_products') || can('can_change_balance') ? ['کالاها'] : []),
     ...(can('can_edit_products') ? ['ویرایش کالاها'] : []),
     'تاریخچه',
@@ -121,6 +127,7 @@ function App() {
         </header>
         <Msg x={msg} />
         {page === 'داشبورد' && <Dashboard user={user} />}
+        {page === 'فاکتورهای امروز' && <TodayInvoices />}
         {page === 'کالاها' && <Products user={user} ok={setMsg} />}
         {page === 'ویرایش کالاها' && <EditProducts user={user} ok={setMsg} />}
         {page === 'تاریخچه' && <History user={user} ok={setMsg} />}
@@ -282,23 +289,51 @@ function Products({ user, ok }) {
       )}
       {canChange && (
         <div className="panel">
-          <h3>تغییر تراز کالا</h3>
+          <h3>خرید و فروش (تغییر تراز کالا)</h3>
           <form className="form" onSubmit={(x) => post(x, `/api/products/${change.product_id}/balance`, change, () => setChange(EMPTY_CHANGE))}>
             <select required value={change.product_id} onChange={(x) => setChange({ ...change, product_id: x.target.value })}>
               <option value="">کالا را انتخاب کنید</option>
-              {products.map((item) => <option key={item.id} value={item.id}>{item.name} ({item.quantity} {item.unit || 'عدد'})</option>)}
+              {products.map((item) => <option key={item.id} value={item.id}>{item.name} ({fmt(item.quantity)} {item.unit || 'عدد'})</option>)}
             </select>
+            <select value={change.direction} onChange={(x) => setChange({ ...change, direction: x.target.value })}>
+              {DIRECTIONS.map((d) => <option key={d}>{d}</option>)}
+            </select>
+            <input required type="number" step="any" placeholder={`مقدار (${change.direction === 'خرید' ? 'ورود کالا' : 'خروج کالا'})`} value={change.quantity} onChange={(x) => setChange({ ...change, quantity: x.target.value })} />
+            <input required type="number" step="any" placeholder="قیمت هر واحد/گرم" value={change.unit_price} onChange={(x) => setChange({ ...change, unit_price: x.target.value })} />
+            <select value={change.settlement_method} onChange={(x) => setChange({ ...change, settlement_method: x.target.value })}>
+              {SETTLEMENT_METHODS.map((m) => <option key={m}>{m}</option>)}
+            </select>
+            {change.settlement_method === 'حواله' && (
+              <>
+                <select value={change.settlement_medium} onChange={(x) => setChange({ ...change, settlement_medium: x.target.value })}>
+                  <option value="ریال">حواله ریالی</option>
+                  <option value="کاغذ">حواله کاغذی</option>
+                </select>
+                <select required value={change.from_person_id} onChange={(x) => setChange({ ...change, from_person_id: x.target.value })}>
+                  <option value="">حواله از شخص</option>
+                  {persons.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+                <select required value={change.to_person_id} onChange={(x) => setChange({ ...change, to_person_id: x.target.value })}>
+                  <option value="">حواله به شخص</option>
+                  {persons.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+              </>
+            )}
             <select value={change.person_id} onChange={(x) => setChange({ ...change, person_id: x.target.value })}>
-              <option value="">بدون شخص (تعدیل کلی)</option>
+              <option value="">طرف معامله (اختیاری)</option>
               {persons.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
-            <input required type="number" step="any" placeholder="مثبت: دادن / منفی: گرفتن" value={change.amount} onChange={(x) => setChange({ ...change, amount: +x.target.value })} />
+            <input placeholder="تاریخ تسویه شمسی ۱۴۰۵/۰۶/۰۱" value={change.settlement_date} onChange={(x) => setChange({ ...change, settlement_date: x.target.value })} />
             <input placeholder="یادداشت" value={change.note} onChange={(x) => setChange({ ...change, note: x.target.value })} />
-            <button disabled={busy}>ثبت تغییر</button>
+            <button disabled={busy}>ثبت {change.direction}</button>
           </form>
-          <small className="hint">اگر شخصی انتخاب شود، تراز آن شخص برای همین کالا هم به همان میزان تغییر می‌کند.</small>
+          <small className="hint">
+            مبلغ کل: {fmt((+change.quantity || 0) * (+change.unit_price || 0))} ·
+            {' '}با تسویه {change.settlement_method === 'حواله' ? `حواله (${change.settlement_medium})` : change.settlement_method} مبلغ از محصول {change.settlement_method === 'کاغذ' ? 'کاغذ' : 'ریال'} کم/زیاد می‌شود؛ حواله بین دو شخص جابه‌جا می‌شود.
+          </small>
         </div>
       )}
+      <BalancePanel products={products} />
       <div className="panel">
         <h3>کالاها</h3>
         <table>
@@ -309,6 +344,120 @@ function Products({ user, ok }) {
             ))}
           </tbody>
         </table>
+      </div>
+    </>
+  )
+}
+
+/**
+ * Shows the product balance chart (with minute/hour/day granularity) for a
+ * chosen product, right inside the کالاها section.
+ */
+function BalancePanel({ products }) {
+  const [productId, setProductId] = useState('')
+  const [granularity, setGranularity] = useState('day')
+  const [history, setHistory] = useState([])
+
+  useEffect(() => {
+    if (!productId) { setHistory([]); return }
+    api(`/api/products/${productId}/history`).then(setHistory).catch(() => setHistory([]))
+  }, [productId])
+
+  const selected = products.find((p) => String(p.id) === String(productId))
+
+  return (
+    <div className="panel">
+      <div className="panel-title">
+        <span>نمودار تراز کالا</span>
+        <small>تراز بر اساس دقیقه، ساعت یا روز</small>
+      </div>
+      <form className="form" onSubmit={(e) => e.preventDefault()}>
+        <select value={productId} onChange={(e) => setProductId(e.target.value)}>
+          <option value="">کالا را انتخاب کنید</option>
+          {products.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+        </select>
+        <select value={granularity} onChange={(e) => setGranularity(e.target.value)}>
+          {GRANULARITIES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+        </select>
+      </form>
+      {selected
+        ? (
+            <>
+              <small className="hint">تراز فعلی {selected.name}: {fmt(selected.quantity)} {selected.unit || 'عدد'} · {history.length} تغییر ثبت‌شده</small>
+              {history.length
+                ? <BalanceLineChart items={history} granularity={granularity} />
+                : <div className="empty">برای این کالا تغییری ثبت نشده است.</div>}
+            </>
+          )
+        : <div className="empty">برای دیدن نمودار، کالا را انتخاب کنید.</div>}
+    </div>
+  )
+}
+
+function TodayInvoices() {
+  const [data, setData] = useState(null)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    api('/api/invoices/today').then(setData).catch((x) => setError(x.message))
+  }, [])
+
+  if (error) return <Msg x={error} />
+  if (!data) return <div className="panel"><div className="empty">در حال بارگذاری…</div></div>
+
+  const stats = data.stats || {}
+  const cards = [
+    ['تعداد فاکتورها', stats.count],
+    ['مبلغ خریدها', fmt(stats.buy_value)],
+    ['مبلغ فروش‌ها', fmt(stats.sale_value)],
+    ['تراز کلی', fmt(stats.balance)],
+    ['میانگین قیمت خرید', stats.avg_buy_price ? fmt(stats.avg_buy_price) : '—'],
+    ['میانگین قیمت فروش', stats.avg_sale_price ? fmt(stats.avg_sale_price) : '—'],
+    ['میانگین وزن خرید', stats.avg_buy_weight !== null && stats.avg_buy_weight !== undefined ? fmt(stats.avg_buy_weight) : '—'],
+    ['میانگین وزن فروش', stats.avg_sale_weight !== null && stats.avg_sale_weight !== undefined ? fmt(stats.avg_sale_weight) : '—'],
+  ]
+
+  return (
+    <>
+      <div className="cards">
+        {cards.map(([name, value]) => <article key={name}><small>{name}</small><b>{value || 0}</b></article>)}
+      </div>
+      <div className="panel">
+        <div className="panel-title">
+          <span>فاکتورهای امروز</span>
+          <small>{data.today_jalali} · خرید: {stats.buy_count || 0} · فروش: {stats.sale_count || 0}</small>
+        </div>
+        {data.invoices?.length
+          ? (
+              <table>
+                <thead>
+                  <tr>
+                    <th>ساعت</th><th>کالا</th><th>نوع</th><th>مقدار</th><th>قیمت واحد</th>
+                    <th>مبلغ کل</th><th>تسویه</th><th>تاریخ تسویه</th><th>اشخاص</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.invoices.map((item) => (
+                    <tr key={item.id}>
+                      <td>{item.created_at_jalali?.slice(-5) || '—'}</td>
+                      <td>{item.product?.name || '—'}</td>
+                      <td className={item.direction === 'خرید' ? 'up' : 'down'}>{item.direction || 'تعدیل'}</td>
+                      <td>{fmt(item.change_amount)} {item.product?.unit || ''}</td>
+                      <td>{item.unit_price ? fmt(item.unit_price) : '—'}</td>
+                      <td>{item.total_price ? fmt(item.total_price) : '—'}</td>
+                      <td>{item.settlement_method || '—'}</td>
+                      <td>{item.settlement_date_jalali || '—'}</td>
+                      <td>
+                        {item.from_person && item.to_person
+                          ? `${item.from_person.name} → ${item.to_person.name}`
+                          : item.person?.name || item.from_person?.name || item.to_person?.name || '—'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )
+          : <div className="empty">امروز خرید و فروشی ثبت نشده است.</div>}
       </div>
     </>
   )
