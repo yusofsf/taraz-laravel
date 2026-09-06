@@ -6,4 +6,8 @@
 .chip input{width:auto;margin:0;accent-color:#0da38c;cursor:pointer}
 .chip.on{background:#e3f8f2;border-color:#12a58e;color:#087967}
 button.ghost{background:#eef2f7;color:#53617a}
+.badge{display:inline-block;font-size:11px;font-weight:600;padding:3px 10px;margin-right:8px;border-radius:999px;vertical-align:middle}
+.badge.debtor,.chip.debtor{background:#fdeceb;border-color:#ee9c92;color:#b3402f}
+.badge.creditor,.chip.creditor{background:#e3f8f2;border-color:#12a58e;color:#087967}
+.badge.settled,.chip.settled{background:#eef2f7;border-color:#dbe3ee;color:#53617a}
 .hint{display:block;margin-top:10px;color:var(--muted);font-size:12px}

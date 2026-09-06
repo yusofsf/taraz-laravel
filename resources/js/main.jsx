@@ -13,23 +13,46 @@ const PERMISSIONS = [
 
 const UNITS = ['عدد', 'گرم', 'مثقال', 'انس']
 
-const api = (url, opt = {}) =>
+const csrfMeta = () => document.querySelector('meta[name=csrf-token]')
+
+const request = (url, opt) =>
   fetch(url, {
     headers: {
       'Content-Type': 'application/json',
-      'X-CSRF-TOKEN': document.querySelector('meta[name=csrf-token]')?.content,
+      'X-CSRF-TOKEN': csrfMeta()?.content,
       Accept: 'application/json',
     },
     credentials: 'same-origin',
     ...opt,
     body: opt.body && JSON.stringify(opt.body),
-  }).then(async (r) => {
-    const data = await r.json().catch(() => null)
-    if (!r.ok) throw Error(data?.message || Object.values(data?.errors || {}).flat()?.[0] || 'خطا')
-    return data
   })
 
+const parse = async (r) => {
+  const data = await r.json().catch(() => null)
+  if (r.status === 401) window.dispatchEvent(new Event('auth-expired'))
+  if (!r.ok) throw Error(data?.message || Object.values(data?.errors || {}).flat()?.[0] || 'خطا')
+  return data
+}
+
+const api = async (url, opt = {}) => {
+  const first = await request(url, opt)
+  if (first.status !== 419) return parse(first)
+
+  // توکن صفحه کهنه شده؛ توکن تازه می‌گیریم و همان درخواست یک‌بار دیگر تکرار می‌شود
+  const meta = csrfMeta()
+  const fresh = await fetch('/api/token', { headers: { Accept: 'application/json' }, credentials: 'same-origin' })
+    .then((r) => r.json())
+    .catch(() => null)
+  if (meta && fresh?.token) {
+    meta.setAttribute('content', fresh.token)
+    return parse(await request(url, opt))
+  }
+  return parse(first)
+}
+
 const Msg = ({ x }) => x && <p className="msg">{x}</p>
+
+const fmt = (x) => +(+x).toFixed(3)
 
 const EMPTY_PRODUCT = { name: '', sku: '', quantity: 0, unit: 'عدد' }
 const EMPTY_CHANGE = { product_id: '', amount: '', note: '', person_id: '' }
@@ -172,7 +195,7 @@ function Dashboard({ user }) {
           {(data.products || []).map((item) => (
             <article className="clickable" key={item.id} onClick={() => choose(item)}>
               <div><strong>{item.name}</strong><small>{item.sku || 'بدون کد'}</small></div>
-              <b>{item.quantity} <em>{item.unit || 'عدد'}</em></b>
+              <b>{fmt(item.quantity)} <em>{item.unit || 'عدد'}</em></b>
             </article>
           ))}
         </div>
@@ -183,7 +206,7 @@ function Dashboard({ user }) {
           {(user.is_admin || user.can_edit_products) && (
             <form className="form" onSubmit={save}>
               <input value={selected.name} onChange={(q) => setSelected({ ...selected, name: q.target.value })} />
-              <input type="number" value={selected.quantity} onChange={(q) => setSelected({ ...selected, quantity: +q.target.value })} />
+              <input type="number" value={selected.quantity} step="any" onChange={(q) => setSelected({ ...selected, quantity: +q.target.value })} />
               <select value={selected.unit} onChange={(q) => setSelected({ ...selected, unit: q.target.value })}>
                 {UNITS.map((u) => <option key={u}>{u}</option>)}
               </select>
@@ -199,8 +222,8 @@ function Dashboard({ user }) {
                   <td>{item.created_at_jalali}</td>
                   <td>{item.person?.name || '—'}</td>
                   <td>{item.user?.name}</td>
-                  <td>{item.change_amount}</td>
-                  <td>{item.new_quantity} {selected.unit}</td>
+                  <td>{fmt(item.change_amount)}</td>
+                  <td>{fmt(item.new_quantity)} {selected.unit}</td>
                 </tr>
               ))}
             </tbody>
@@ -245,7 +268,7 @@ function Products({ user, ok }) {
           <form className="form" onSubmit={(x) => post(x, '/api/products', form, () => setForm(EMPTY_PRODUCT))}>
             <input required placeholder="نام کالا" value={form.name} onChange={(x) => setForm({ ...form, name: x.target.value })} />
             <input placeholder="کد کالا" value={form.sku} onChange={(x) => setForm({ ...form, sku: x.target.value })} />
-            <input type="number" value={form.quantity} onChange={(x) => setForm({ ...form, quantity: +x.target.value })} />
+            <input type="number" value={form.quantity} step="any" onChange={(x) => setForm({ ...form, quantity: +x.target.value })} />
             <select value={form.unit} onChange={(x) => setForm({ ...form, unit: x.target.value })}>
               {UNITS.map((u) => <option key={u}>{u}</option>)}
             </select>
@@ -265,7 +288,7 @@ function Products({ user, ok }) {
               <option value="">بدون شخص (تعدیل کلی)</option>
               {persons.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
-            <input required type="number" placeholder="مثبت: دادن / منفی: گرفتن" value={change.amount} onChange={(x) => setChange({ ...change, amount: +x.target.value })} />
+            <input required type="number" step="any" placeholder="مثبت: دادن / منفی: گرفتن" value={change.amount} onChange={(x) => setChange({ ...change, amount: +x.target.value })} />
             <input placeholder="یادداشت" value={change.note} onChange={(x) => setChange({ ...change, note: x.target.value })} />
             <button disabled={busy}>ثبت تغییر</button>
           </form>
@@ -278,7 +301,7 @@ function Products({ user, ok }) {
           <thead><tr><th>نام</th><th>کد</th><th>تراز</th><th>واحد</th></tr></thead>
           <tbody>
             {products.map((item) => (
-              <tr key={item.id}><td>{item.name}</td><td>{item.sku || '—'}</td><td>{item.quantity}</td><td>{item.unit || 'عدد'}</td></tr>
+              <tr key={item.id}><td>{item.name}</td><td>{item.sku || '—'}</td><td>{fmt(item.quantity)}</td><td>{item.unit || 'عدد'}</td></tr>
             ))}
           </tbody>
         </table>
@@ -325,7 +348,7 @@ function EditProducts({ ok }) {
                         <form className="form" onSubmit={save}>
                           <input required value={editing.name} onChange={(e) => setEditing({ ...editing, name: e.target.value })} />
                           <input placeholder="کد کالا" value={editing.sku || ''} onChange={(e) => setEditing({ ...editing, sku: e.target.value })} />
-                          <input type="number" value={editing.quantity} onChange={(e) => setEditing({ ...editing, quantity: +e.target.value })} />
+                          <input type="number" value={editing.quantity} step="any" onChange={(e) => setEditing({ ...editing, quantity: +e.target.value })} />
                           <select value={editing.unit} onChange={(e) => setEditing({ ...editing, unit: e.target.value })}>
                             {UNITS.map((u) => <option key={u}>{u}</option>)}
                           </select>
@@ -339,7 +362,7 @@ function EditProducts({ ok }) {
                     <tr key={item.id}>
                       <td>{item.name}</td>
                       <td>{item.sku || '—'}</td>
-                      <td>{item.quantity}</td>
+                      <td>{fmt(item.quantity)}</td>
                       <td>{item.unit || 'عدد'}</td>
                       <td><button type="button" onClick={() => setEditing({ ...item })}>ویرایش</button></td>
                     </tr>
@@ -410,8 +433,8 @@ function History() {
                 <td>{item.product?.name || '—'}</td>
                 <td>{item.person?.name || '—'}</td>
                 <td>{item.user?.name || '—'}</td>
-                <td className={item.change_amount > 0 ? 'up' : 'down'}>{item.change_amount > 0 ? '+' : ''}{item.change_amount}</td>
-                <td>{item.new_quantity}</td>
+                <td className={item.change_amount > 0 ? 'up' : 'down'}>{item.change_amount > 0 ? '+' : ''}{fmt(item.change_amount)}</td>
+                <td>{fmt(item.new_quantity)}</td>
               </tr>
             ))}
             {!items.length && <tr><td colSpan="6" className="empty-row">داده‌ای برای این فیلترها وجود ندارد.</td></tr>}
@@ -421,6 +444,8 @@ function History() {
     </>
   )
 }
+
+const statusClass = (status) => (status === 'بدهکار' ? 'debtor' : status === 'طلبکار' ? 'creditor' : status === 'تسویه' ? 'settled' : '')
 
 function Persons({ user, ok }) {
   const [persons, setPersons] = useState([])
@@ -443,6 +468,14 @@ function Persons({ user, ok }) {
       .finally(() => setBusy(false))
   }
 
+  const counts = persons.reduce((acc, p) => {
+    if (p.status) acc[p.status] = (acc[p.status] || 0) + 1
+    return acc
+  }, {})
+  const summary = [['بدهکار', counts['بدهکار'] || 0], ['طلبکار', counts['طلبکار'] || 0], ['تسویه', counts['تسویه'] || 0]]
+    .map(([name, value]) => `${name}: ${value}`)
+    .join(' · ')
+
   return (
     <>
       <Msg x={error} />
@@ -458,20 +491,22 @@ function Persons({ user, ok }) {
         </div>
       )}
       <div className="panel">
-        <div className="panel-title"><span>اشخاص و تراز آن‌ها</span><small>{persons.length} شخص</small></div>
+        <div className="panel-title"><span>اشخاص و تراز آن‌ها</span><small>{persons.length} شخص · {summary}</small></div>
         {persons.length
           ? (
               <div className="product-balance">
                 {persons.map((person) => (
                   <article key={person.id}>
                     <div>
-                      <strong>{person.name}</strong>
+                      <strong>{person.name}{person.status && <span className={`badge ${statusClass(person.status)}`}>{person.status}</span>}</strong>
                       <small>{person.mobile || 'بدون موبایل'}</small>
                       {person.products?.length
                         ? (
                             <div className="chips">
                               {person.products.map((product) => (
-                                <span className="chip" key={product.id}>{product.name}: {product.pivot.quantity} {product.unit || ''}</span>
+                                <span className={`chip ${statusClass(product.status)}`} key={product.id}>
+                                  {product.name}: {fmt(product.quantity)} {product.unit || ''} · {product.status}
+                                </span>
                               ))}
                             </div>
                           )

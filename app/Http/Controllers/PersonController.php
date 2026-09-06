@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Person;
+use App\Models\Product;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -10,9 +11,28 @@ class PersonController extends Controller
 {
     public function index(): JsonResponse
     {
-        return response()->json(
-            Person::with('products:id,name,unit')->orderBy('name')->get()
-        );
+        $persons = Person::with('products:id,name,unit')->orderBy('name')->get();
+
+        return response()->json($persons->map(function (Person $person) {
+            return [
+                'id' => $person->id,
+                'name' => $person->name,
+                'mobile' => $person->mobile,
+                'note' => $person->note,
+                'status' => $person->status,
+                'products' => $person->products->map(function (Product $product) {
+                    $quantity = (float) $product->pivot->quantity;
+
+                    return [
+                        'id' => $product->id,
+                        'name' => $product->name,
+                        'unit' => $product->unit,
+                        'quantity' => $quantity,
+                        'status' => Person::balanceStatus($quantity),
+                    ];
+                })->values(),
+            ];
+        })->values());
     }
 
     public function store(Request $request): JsonResponse

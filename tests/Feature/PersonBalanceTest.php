@@ -73,8 +73,8 @@ class PersonBalanceTest extends TestCase
             ])
             ->assertCreated();
 
-        $this->assertSame(15, PersonProduct::first()->quantity);
-        $this->assertSame(115, $this->product->fresh()->quantity);
+        $this->assertSame(15.0, PersonProduct::first()->quantity);
+        $this->assertSame(115.0, $this->product->fresh()->quantity);
     }
 
     public function test_balance_change_without_person_keeps_product_only(): void
@@ -117,7 +117,28 @@ class PersonBalanceTest extends TestCase
         $this->actingAsSession($this->admin)
             ->getJson('/api/persons')
             ->assertOk()
-            ->assertJsonFragment(['quantity' => 42]);
+            ->assertJsonFragment(['quantity' => 42.0, 'status' => 'بدهکار']);
+    }
+
+    public function test_person_status_is_debtor_creditor_settled_or_null(): void
+    {
+        $debtor = Person::factory()->create(['name' => 'الف']);
+        $creditor = Person::factory()->create(['name' => 'ب']);
+        $settled = Person::factory()->create(['name' => 'پ']);
+        $fresh = Person::factory()->create(['name' => 'ت']);
+
+        PersonProduct::create(['person_id' => $debtor->id, 'product_id' => $this->product->id, 'quantity' => 10]);
+        PersonProduct::create(['person_id' => $creditor->id, 'product_id' => $this->product->id, 'quantity' => -5]);
+        PersonProduct::create(['person_id' => $settled->id, 'product_id' => $this->product->id, 'quantity' => 0]);
+
+        $persons = collect($this->actingAsSession($this->admin)->getJson('/api/persons')->assertOk()->json());
+
+        $this->assertSame('بدهکار', $persons->firstWhere('name', 'الف')['status']);
+        $this->assertSame('بدهکار', $persons->firstWhere('name', 'الف')['products'][0]['status']);
+        $this->assertSame('طلبکار', $persons->firstWhere('name', 'ب')['status']);
+        $this->assertSame('تسویه', $persons->firstWhere('name', 'پ')['status']);
+        $this->assertNull($persons->firstWhere('name', 'ت')['status']);
+        $this->assertSame([], $persons->firstWhere('name', 'ت')['products']);
     }
 
     public function test_history_includes_person_name_and_jalali_date(): void
@@ -160,6 +181,31 @@ class PersonBalanceTest extends TestCase
                 'name' => 'x', 'quantity' => 1, 'unit' => 'عدد',
             ])
             ->assertForbidden();
+    }
+
+    public function test_weight_units_accept_decimal_amounts(): void
+    {
+        $this->actingAsSession($this->admin)
+            ->postJson("/api/products/{$this->product->id}/balance", ['amount' => 2.5])
+            ->assertCreated()
+            ->assertJsonPath('new_quantity', 102.5);
+
+        $this->assertSame(2.5, BalanceChange::first()->change_amount);
+    }
+
+    public function test_weight_unit_accepts_decimal_quantity_on_create(): void
+    {
+        $this->actingAsSession($this->admin)
+            ->postJson('/api/products', ['name' => 'طلای آب‌شده', 'quantity' => 12.345, 'unit' => 'گرم'])
+            ->assertCreated()
+            ->assertJsonPath('quantity', 12.345);
+    }
+
+    public function test_piece_unit_rejects_decimal_quantity(): void
+    {
+        $this->actingAsSession($this->admin)
+            ->postJson('/api/products', ['name' => 'سکه', 'quantity' => 1.5, 'unit' => 'عدد'])
+            ->assertStatus(422);
     }
 
     private function actingAsSession(User $user): self

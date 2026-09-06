@@ -13,6 +13,11 @@ class PersonProduct extends Model
 
     protected $fillable = ['person_id', 'product_id', 'quantity'];
 
+    protected function casts(): array
+    {
+        return ['quantity' => 'float'];
+    }
+
     public function person(): BelongsTo
     {
         return $this->belongsTo(Person::class);

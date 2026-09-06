@@ -23,7 +23,7 @@ class ProductController extends Controller
         $data = $request->validate([
             'name' => 'required|string|max:150',
             'sku' => 'nullable|string|max:100',
-            'quantity' => 'required|integer|min:-1000000000|max:1000000000',
+            'quantity' => $this->quantityRule($request->input('unit')),
             'unit' => 'required|in:عدد,گرم,مثقال,انس',
         ]);
 
@@ -35,7 +35,7 @@ class ProductController extends Controller
         $data = $request->validate([
             'name' => 'required|string|max:150',
             'sku' => 'nullable|string|max:100',
-            'quantity' => 'required|integer|min:-1000000000|max:1000000000',
+            'quantity' => $this->quantityRule($request->input('unit')),
             'unit' => 'required|in:عدد,گرم,مثقال,انس',
         ]);
 
@@ -45,13 +45,23 @@ class ProductController extends Controller
     }
 
     /**
+     * عدد must stay whole; weight units (گرم، مثقال، انس) accept up to 3 decimals.
+     */
+    private function quantityRule(?string $unit): string
+    {
+        return $unit === 'عدد'
+            ? 'required|integer|min:-1000000000|max:1000000000'
+            : 'required|numeric|decimal:0,3|min:-1000000000|max:1000000000';
+    }
+
+    /**
      * Changes the product balance and, when a person is given,
      * mirrors the change on that person's balance for the product.
      */
     public function changeBalance(Request $request, Product $product): JsonResponse
     {
         $data = $request->validate([
-            'amount' => 'required|integer|not_in:0|min:-1000000000|max:1000000000',
+            'amount' => $this->quantityRule($product->unit).'|not_in:0',
             'note' => 'nullable|string|max:200',
             'person_id' => 'nullable|integer|exists:persons,id',
         ]);

@@ -6,9 +6,11 @@ use App\Http\Controllers\ProductController;
 use App\Http\Controllers\UserController;
 use App\Models\BalanceChange;
 use App\Models\Product;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Route;
 
 Route::view('/', 'app');
+Route::get('/api/token', fn (): JsonResponse => response()->json(['token' => csrf_token()]));
 Route::post('/api/login', [AuthController::class, 'login'])->middleware('throttle:10,1');
 Route::post('/api/logout', [AuthController::class, 'logout']);
 Route::middleware('web.auth')->group(function () {

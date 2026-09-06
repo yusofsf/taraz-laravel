@@ -12,6 +12,15 @@ class BalanceChange extends Model
 
     protected $appends = ['created_at_jalali'];
 
+    protected function casts(): array
+    {
+        return [
+            'change_amount' => 'float',
+            'previous_quantity' => 'float',
+            'new_quantity' => 'float',
+        ];
+    }
+
     public function product(): BelongsTo
     {
         return $this->belongsTo(Product::class);
