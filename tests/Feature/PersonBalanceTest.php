@@ -134,7 +134,8 @@ class PersonBalanceTest extends TestCase
         $persons = collect($this->actingAsSession($this->admin)->getJson('/api/persons')->assertOk()->json());
 
         $this->assertSame('بدهکار', $persons->firstWhere('name', 'الف')['status']);
-        $this->assertSame('بدهکار', $persons->firstWhere('name', 'الف')['products'][0]['status']);
+        $debtorGold = collect($persons->firstWhere('name', 'الف')['products'])->firstWhere('name', 'طلا');
+        $this->assertSame('بدهکار', $debtorGold['status']);
         $this->assertSame('طلبکار', $persons->firstWhere('name', 'ب')['status']);
         $this->assertSame('تسویه', $persons->firstWhere('name', 'پ')['status']);
         $this->assertSame('تسویه', $persons->firstWhere('name', 'ت')['status']);

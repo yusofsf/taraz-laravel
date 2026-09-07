@@ -264,9 +264,10 @@ class ProductController extends Controller
 
     public function moneyProduct(string $name): Product
     {
+        // کاغذ و ریال کالای پیش‌فرض سامانه‌اند، نه واحد؛ برای همین همیشه وجودشان تضمین می‌شود
         return Product::firstOrCreate(
             ['name' => $name],
-            ['sku' => $name === 'کاغذ' ? 'PAPER' : 'RIAL', 'quantity' => 0, 'unit' => $name]
+            ['sku' => $name === 'کاغذ' ? 'PAPER' : 'RIAL', 'quantity' => 0, 'unit' => 'عدد']
         );
     }
 
