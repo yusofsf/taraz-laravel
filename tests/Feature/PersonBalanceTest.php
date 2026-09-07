@@ -234,6 +234,25 @@ class PersonBalanceTest extends TestCase
             ->assertJsonPath('quantity', 12.345);
     }
 
+    public function test_creating_product_with_initial_quantity_records_an_adjustment(): void
+    {
+        $this->actingAsSession($this->admin)
+            ->postJson('/api/products', ['name' => 'سکه', 'quantity' => 20, 'unit' => 'عدد'])
+            ->assertCreated();
+
+        $adjust = BalanceChange::where('note', 'ثبت کالا با تراز اولیه')->first();
+
+        $this->assertNotNull($adjust);
+        $this->assertSame(20.0, (float) $adjust->change_amount);
+        $this->assertSame(20.0, (float) $adjust->new_quantity);
+
+        $this->actingAsSession($this->admin)
+            ->postJson('/api/products', ['name' => 'کاغذ صفر', 'quantity' => 0, 'unit' => 'عدد'])
+            ->assertCreated();
+
+        $this->assertSame(1, BalanceChange::where('note', 'ثبت کالا با تراز اولیه')->count());
+    }
+
     public function test_piece_unit_rejects_decimal_quantity(): void
     {
         $this->actingAsSession($this->admin)

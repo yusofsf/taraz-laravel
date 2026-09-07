@@ -30,7 +30,22 @@ class ProductController extends Controller
             'unit' => 'required|in:عدد,گرم,مثقال,انس',
         ]);
 
-        return response()->json(Product::create($data), 201);
+        $product = Product::create($data);
+
+        // تراز اولیه کالای تازه ثبت‌شده هم باید در ترازِ از اول دوره حساب شود
+        if ((float) $product->quantity !== 0.0) {
+            BalanceChange::create([
+                'product_id' => $product->id,
+                'user_id' => $request->session()->get('user_id'),
+                'type' => BalanceChange::TYPE_ADJUST,
+                'change_amount' => $product->quantity,
+                'previous_quantity' => 0,
+                'new_quantity' => $product->quantity,
+                'note' => 'ثبت کالا با تراز اولیه',
+            ]);
+        }
+
+        return response()->json($product, 201);
     }
 
     public function update(Request $request, Product $product): JsonResponse
