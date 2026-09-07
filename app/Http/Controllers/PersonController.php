@@ -11,6 +11,7 @@ class PersonController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
+        $products = Product::orderBy('name')->get(['id', 'name', 'unit']);
         $persons = Person::with('products:id,name,unit')
             ->when($request->filled('q'), function ($query) use ($request) {
                 $term = '%'.trim($request->string('q')).'%';
@@ -21,15 +22,15 @@ class PersonController extends Controller
             ->orderBy('name')
             ->get();
 
-        return response()->json($persons->map(function (Person $person) {
+        return response()->json($persons->map(function (Person $person) use ($products) {
             return [
                 'id' => $person->id,
                 'name' => $person->name,
                 'mobile' => $person->mobile,
                 'note' => $person->note,
                 'status' => $person->status,
-                'products' => $person->products->map(function (Product $product) {
-                    $quantity = (float) $product->pivot->quantity;
+                'products' => $products->map(function (Product $product) use ($person) {
+                    $quantity = (float) ($person->products->find($product->id)?->pivot->quantity ?? 0);
 
                     return [
                         'id' => $product->id,
