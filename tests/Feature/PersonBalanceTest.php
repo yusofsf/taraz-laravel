@@ -139,10 +139,9 @@ class PersonBalanceTest extends TestCase
         $this->assertSame('طلبکار', $persons->firstWhere('name', 'ب')['status']);
         $this->assertSame('تسویه', $persons->firstWhere('name', 'پ')['status']);
         $this->assertSame('تسویه', $persons->firstWhere('name', 'ت')['status']);
-        $freshProducts = $persons->firstWhere('name', 'ت')['products'];
-        $this->assertSame('طلا', $freshProducts[0]['name']);
-        $this->assertEquals(0, $freshProducts[0]['quantity']);
-        $this->assertSame('تسویه', $freshProducts[0]['status']);
+        $freshGold = collect($persons->firstWhere('name', 'ت')['products'])->firstWhere('name', 'طلا');
+        $this->assertEquals(0, $freshGold['quantity']);
+        $this->assertSame('تسویه', $freshGold['status']);
     }
 
     public function test_history_includes_person_name_and_jalali_date(): void
