@@ -120,7 +120,7 @@ class PersonBalanceTest extends TestCase
             ->assertJsonFragment(['quantity' => 42.0, 'status' => 'بدهکار']);
     }
 
-    public function test_person_status_is_debtor_creditor_settled_or_null(): void
+    public function test_person_status_is_debtor_creditor_or_settled(): void
     {
         $debtor = Person::factory()->create(['name' => 'الف']);
         $creditor = Person::factory()->create(['name' => 'ب']);
@@ -137,7 +137,7 @@ class PersonBalanceTest extends TestCase
         $this->assertSame('بدهکار', $persons->firstWhere('name', 'الف')['products'][0]['status']);
         $this->assertSame('طلبکار', $persons->firstWhere('name', 'ب')['status']);
         $this->assertSame('تسویه', $persons->firstWhere('name', 'پ')['status']);
-        $this->assertNull($persons->firstWhere('name', 'ت')['status']);
+        $this->assertSame('تسویه', $persons->firstWhere('name', 'ت')['status']);
         $this->assertSame([], $persons->firstWhere('name', 'ت')['products']);
     }
 

@@ -26,12 +26,13 @@ class Person extends Model
     }
 
     /**
-     * Overall standing across all products: debtor (owes), creditor (is owed) or settled.
+     * Overall standing across all products: debtor (owes), creditor (is owed)
+     * or settled — including persons without any recorded balance.
      */
     public function getStatusAttribute(): ?string
     {
         if ($this->products->isEmpty()) {
-            return null;
+            return 'تسویه';
         }
 
         if ($this->products->contains(fn (Product $product) => (float) $product->pivot->quantity > 0)) {

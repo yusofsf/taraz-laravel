@@ -765,7 +765,7 @@ function Persons({ user, ok }) {
                                       ))}
                                     </div>
                                   )
-                                : <small>ترازی ثبت نشده</small>}
+                                : <div className="chips"><span className="chip settled">تسویه</span></div>}
                             </>
                           )}
                     </div>
