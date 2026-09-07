@@ -52,7 +52,7 @@ class PersonController extends Controller
             'note' => 'nullable|string|max:200',
         ]);
 
-        return response()->json(Person::create($data), 201);
+        return response()->json(Person::create($this->normalize($data)), 201);
     }
 
     public function update(Request $request, Person $person): JsonResponse
@@ -63,9 +63,23 @@ class PersonController extends Controller
             'note' => 'nullable|string|max:200',
         ]);
 
-        $person->update($data);
+        $person->update($this->normalize($data));
 
         return response()->json($person);
+    }
+
+    /**
+     * موبایل یا یادداشت خالی/صفر را خالی واقعی ذخیره می‌کند تا «0» نمایش داده نشود.
+     */
+    private function normalize(array $data): array
+    {
+        foreach (['mobile', 'note'] as $field) {
+            if (array_key_exists($field, $data) && trim((string) $data[$field]) === '') {
+                $data[$field] = null;
+            }
+        }
+
+        return $data;
     }
 
     public function destroyPerson(Person $person): JsonResponse

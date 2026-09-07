@@ -696,6 +696,9 @@ function History({ user, ok }) {
 
 const statusClass = (status) => (status === 'بدهکار' ? 'debtor' : status === 'طلبکار' ? 'creditor' : status === 'تسویه' ? 'settled' : '')
 
+// موبایل «0» یا خالی به‌عنوان بدون موبایل نمایش داده می‌شود
+const displayMobile = (mobile) => (mobile && String(mobile).trim() !== '0' ? mobile : 'بدون موبایل')
+
 function Persons({ user, ok }) {
   const [persons, setPersons] = useState([])
   const [form, setForm] = useState(EMPTY_PERSON)
@@ -795,7 +798,7 @@ function Persons({ user, ok }) {
                         : (
                             <>
                               <strong>{person.name}{person.status && <span className={`badge ${statusClass(person.status)}`}>{person.status}</span>}</strong>
-                              <small>{person.mobile || 'بدون موبایل'}</small>
+                              <small>{displayMobile(person.mobile)}</small>
                               {person.note && <small>{person.note}</small>}
                               {(canEdit || canDelete) && (
                                 <div className="chips">
