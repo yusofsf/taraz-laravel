@@ -184,14 +184,15 @@ function Dashboard({ user }) {
 
   const fetchHistory = (id, r) => {
     const query = new URLSearchParams()
-    if (r.from) query.set('from', r.from)
-    if (r.to) query.set('to', r.to)
+    const from = r.from.trim() || fiscalFrom
+    if (from) query.set('from', from)
+    if (r.to.trim()) query.set('to', r.to.trim())
     api(`/api/products/${id}/history?${query.toString()}`).then(setHistory).catch(() => setHistory([]))
   }
 
   const choose = (item) => {
     setSelected({ ...item })
-    const r = { from: fiscalFrom, to: '' }
+    const r = { from: '', to: '' }
     setRange(r)
     fetchHistory(item.id, r)
   }
@@ -249,6 +250,9 @@ function Dashboard({ user }) {
             <input placeholder="تا تاریخ ۱۴۰۵/۰۶/۳۱" value={range.to} onChange={(q) => setRange({ ...range, to: q.target.value })} />
             <button>نمایش بازه</button>
           </form>
+          <small className="hint">
+            تراز از اول دوره ({fiscalFrom}): {fmt(history.reduce((sum, item) => sum + (+item.change_amount || 0), 0))} {selected.unit || 'عدد'}
+          </small>
           <ProductBalanceCharts history={history} unit={selected.unit} />
           <table>
             <thead><tr><th>تاریخ</th><th>شخص</th><th>کاربر</th><th>تغییر</th><th>تراز جدید</th></tr></thead>
