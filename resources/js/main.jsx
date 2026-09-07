@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { Area, AreaChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import './style.css'
 
 const PERMISSIONS = [
@@ -71,7 +71,7 @@ function BalanceLineChart({ items, granularity = 'day' }) {
     let name = item.created_at_jalali?.slice(0, 10) || ''
     if (date && granularity === 'hour') name += ` ${String(date.getHours()).padStart(2, '0')}:00`
     if (date && granularity === 'minute') name += ` ${item.created_at_jalali?.slice(-5) || ''}`
-    return { name, change: item.change_amount, balance: item.new_quantity }
+    return { name, change: item.change_amount }
   }), [items, granularity])
 
   return (
@@ -81,9 +81,8 @@ function BalanceLineChart({ items, granularity = 'day' }) {
           <CartesianGrid strokeDasharray="3 3" stroke="#e8edf4" />
           <XAxis dataKey="name" tick={{ fontSize: 11 }} reversed />
           <YAxis tick={{ fontSize: 11 }} width={48} orientation="right" />
-          <Tooltip formatter={(value, key) => [value, key === 'change' ? 'تغییر' : 'تراز']} />
+          <Tooltip formatter={(value) => [value, 'تغییر']} />
           <Line type="monotone" dataKey="change" name="تغییر" stroke="#0da38c" strokeWidth={2} dot={{ r: 3 }} />
-          <Line type="monotone" dataKey="balance" name="تراز" stroke="#14233e" strokeWidth={2} strokeDasharray="6 3" dot={false} />
         </LineChart>
       </ResponsiveContainer>
     </div>
@@ -396,31 +395,50 @@ function ProductBalanceCharts({ history, unit }) {
     ;(item.change_amount > 0 ? positives : negatives).push(point)
   })
 
-  const chart = (data, title, color) => (
+  const tooltip = (unit) => ({ active, payload, label }) => {
+    if (!active || !payload?.length) return null
+    return (
+      <div className="chart-tooltip">
+        <b>{label}</b>
+        <span>{fmt(payload[0].value)} {unit || 'عدد'}</span>
+      </div>
+    )
+  }
+
+  const chart = (data, title, color, id) => (
     <div className="half-chart">
-      <small>{title} · {data.length} مورد</small>
+      <div className="half-chart-title" style={{ '--dot': color }}>
+        <span>{title}</span>
+        <small>{data.length} مورد</small>
+      </div>
       {data.length
         ? (
           <div className="chart small">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={data} margin={{ top: 12, right: 16, bottom: 4, left: 4 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e8edf4" />
-                <XAxis dataKey="name" tick={{ fontSize: 10 }} reversed />
-                <YAxis tick={{ fontSize: 11 }} width={48} orientation="right" />
-                <Tooltip />
-                <Line type="monotone" dataKey="مقدار" stroke={color} strokeWidth={2} dot={{ r: 3 }} />
-              </LineChart>
+              <AreaChart data={data} margin={{ top: 14, right: 18, bottom: 4, left: 4 }}>
+                <defs>
+                  <linearGradient id={id} x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor={color} stopOpacity={0.35} />
+                    <stop offset="100%" stopColor={color} stopOpacity={0.02} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e8edf4" vertical={false} />
+                <XAxis dataKey="name" tick={{ fontSize: 10, fill: '#73809a' }} tickLine={false} axisLine={{ stroke: '#e8edf4' }} reversed />
+                <YAxis tick={{ fontSize: 11, fill: '#73809a' }} tickLine={false} axisLine={false} width={52} orientation="right" />
+                <Tooltip content={tooltip(unit)} />
+                <Area type="monotone" dataKey="مقدار" stroke={color} strokeWidth={2.5} fill={`url(#${id})`} dot={{ r: 3.5, fill: color, strokeWidth: 0 }} activeDot={{ r: 5.5, strokeWidth: 2, stroke: '#fff' }} />
+              </AreaChart>
             </ResponsiveContainer>
           </div>
         )
-        : <div className="empty">در این بازه داده‌ای ثبت نشده است.</div>}
+        : <div className="empty bordered">در این بازه داده‌ای ثبت نشده است.</div>}
     </div>
   )
 
   return (
     <div className="dual-charts">
-      {chart(positives, `افزایش کالا (${unit || 'عدد'})`, '#0da38c')}
-      {chart(negatives, `کاهش کالا (${unit || 'عدد'})`, '#d64545')}
+      {chart(positives, `افزایش کالا (${unit || 'عدد'})`, '#0da38c', 'grad-up')}
+      {chart(negatives, `کاهش کالا (${unit || 'عدد'})`, '#d64545', 'grad-down')}
     </div>
   )
 }
@@ -632,13 +650,13 @@ function History({ user, ok }) {
       <div className="panel">
         <div className="panel-title"><span>ریز تغییرات</span><small>{items.length} مورد</small></div>
         <table>
-          <thead><tr><th>تاریخ</th><th>کالا</th><th>شخص</th><th>کاربر</th><th>تغییر</th><th>تراز</th>{(canEdit || canDelete) && <th>عملیات</th>}</tr></thead>
+          <thead><tr><th>تاریخ</th><th>کالا</th><th>شخص</th><th>کاربر</th><th>تغییر</th>{(canEdit || canDelete) && <th>عملیات</th>}</tr></thead>
           <tbody>
             {items.map((item) => (
               editing?.id === item.id
                 ? (
                     <tr key={item.id}>
-                      <td colSpan={canEdit || canDelete ? 7 : 6}>
+                      <td colSpan={canEdit || canDelete ? 6 : 5}>
                         <form className="form" onSubmit={saveEdit}>
                           <input required type="number" step="any" value={editing.change_amount} onChange={(e) => setEditing({ ...editing, change_amount: e.target.value })} />
                           <select value={editing.person_id || ''} onChange={(e) => setEditing({ ...editing, person_id: e.target.value })}>
@@ -659,7 +677,6 @@ function History({ user, ok }) {
                       <td>{item.person?.name || '—'}</td>
                       <td>{item.user?.name || '—'}</td>
                       <td className={item.change_amount > 0 ? 'up' : 'down'}>{item.change_amount > 0 ? '+' : ''}{fmt(item.change_amount)}</td>
-                      <td>{fmt(item.new_quantity)}</td>
                       {(canEdit || canDelete) && (
                         <td>
                           {canEdit && <button type="button" onClick={() => setEditing({ ...item, person_id: item.person?.id || '' })}>ویرایش</button>}
@@ -669,7 +686,7 @@ function History({ user, ok }) {
                     </tr>
                   )
             ))}
-            {!items.length && <tr><td colSpan={canEdit || canDelete ? 7 : 6} className="empty-row">داده‌ای برای این فیلترها وجود ندارد.</td></tr>}
+            {!items.length && <tr><td colSpan={canEdit || canDelete ? 6 : 5} className="empty-row">داده‌ای برای این فیلترها وجود ندارد.</td></tr>}
           </tbody>
         </table>
       </div>
