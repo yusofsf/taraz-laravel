@@ -27,7 +27,7 @@ class ProductController extends Controller
             'name' => 'required|string|max:150',
             'sku' => 'nullable|string|max:100',
             'quantity' => $this->quantityRule($request->input('unit')),
-            'unit' => 'required|in:عدد,گرم,مثقال,انس,کاغذ,ریال',
+            'unit' => 'required|in:عدد,گرم,مثقال,انس',
         ]);
 
         return response()->json(Product::create($data), 201);
@@ -39,10 +39,30 @@ class ProductController extends Controller
             'name' => 'required|string|max:150',
             'sku' => 'nullable|string|max:100',
             'quantity' => $this->quantityRule($request->input('unit')),
-            'unit' => 'required|in:عدد,گرم,مثقال,انس,کاغذ,ریال',
+            'unit' => 'required|in:عدد,گرم,مثقال,انس',
         ]);
 
-        $product->update($data);
+        $oldQuantity = (float) $product->quantity;
+
+        DB::transaction(function () use ($data, $product, $oldQuantity, $request) {
+            $product->update($data);
+
+            // ویرایش تراز اولیه هم باید در ترازِ از اول دوره حساب شود، پس به‌عنوان تعدیل ثبت می‌شود
+            $delta = (float) $product->quantity - $oldQuantity;
+            if ($delta !== 0.0) {
+                BalanceChange::create([
+                    'product_id' => $product->id,
+                    'user_id' => $request->session()->get('user_id'),
+                    'type' => BalanceChange::TYPE_ADJUST,
+                    'change_amount' => $delta,
+                    'previous_quantity' => $oldQuantity,
+                    'new_quantity' => $product->quantity,
+                    'note' => 'ویرایش تراز اولیه کالا',
+                ]);
+
+                $this->recomputeProductHistory($product);
+            }
+        });
 
         return response()->json($product);
     }

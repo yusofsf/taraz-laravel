@@ -175,6 +175,36 @@ class PersonBalanceTest extends TestCase
         $this->assertDatabaseHas('products', ['id' => $this->product->id, 'quantity' => 90]);
     }
 
+    public function test_editing_initial_quantity_records_an_adjustment(): void
+    {
+        $this->actingAsSession($this->admin)
+            ->putJson("/api/products/{$this->product->id}", [
+                'name' => $this->product->name, 'quantity' => 90, 'unit' => $this->product->unit,
+            ])
+            ->assertOk();
+
+        $adjust = BalanceChange::where('product_id', $this->product->id)
+            ->where('type', BalanceChange::TYPE_ADJUST)
+            ->where('note', 'ویرایش تراز اولیه کالا')
+            ->first();
+
+        $this->assertNotNull($adjust);
+        $this->assertSame(-10.0, (float) $adjust->change_amount);
+        $this->assertSame(100.0, (float) $adjust->previous_quantity);
+        $this->assertSame(90.0, (float) $adjust->new_quantity);
+    }
+
+    public function test_editing_product_without_quantity_change_records_nothing(): void
+    {
+        $this->actingAsSession($this->admin)
+            ->putJson("/api/products/{$this->product->id}", [
+                'name' => 'نام جدید', 'quantity' => $this->product->quantity, 'unit' => $this->product->unit,
+            ])
+            ->assertOk();
+
+        $this->assertDatabaseCount('balance_changes', 0);
+    }
+
     public function test_user_without_edit_permission_cannot_edit_product(): void
     {
         $viewer = User::factory()->create(['mobile' => '09222222222']);

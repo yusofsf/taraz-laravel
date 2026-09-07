@@ -15,7 +15,7 @@ const PERMISSIONS = [
   ['can_manage_permissions', 'مدیریت دسترسی‌ها'],
 ]
 
-const UNITS = ['عدد', 'گرم', 'مثقال', 'انس', 'کاغذ', 'ریال']
+const UNITS = ['عدد', 'گرم', 'مثقال', 'انس']
 const DIRECTIONS = ['خرید', 'فروش']
 const SETTLEMENT_METHODS = ['حواله', 'کاغذ', 'ریال']
 
@@ -255,17 +255,21 @@ function Dashboard({ user }) {
           </small>
           <ProductBalanceCharts history={history} unit={selected.unit} />
           <table>
-            <thead><tr><th>تاریخ</th><th>شخص</th><th>کاربر</th><th>تغییر</th><th>تراز جدید</th></tr></thead>
+            <thead><tr><th>تاریخ</th><th>شخص</th><th>کاربر</th><th>تغییر</th><th>تراز از اول دوره</th></tr></thead>
             <tbody>
-              {history.map((item) => (
-                <tr key={item.id}>
-                  <td>{item.created_at_jalali}</td>
-                  <td>{item.person?.name || '—'}</td>
-                  <td>{item.user?.name}</td>
-                  <td>{fmt(item.change_amount)}</td>
-                  <td>{fmt(item.new_quantity)} {selected.unit}</td>
-                </tr>
-              ))}
+              {[...history].reverse().map((item, index, all) => {
+                let running = 0
+                for (let i = 0; i <= index; i++) running += +all[i].change_amount || 0
+                return (
+                  <tr key={item.id}>
+                    <td>{item.created_at_jalali}</td>
+                    <td>{item.person?.name || '—'}</td>
+                    <td>{item.user?.name}</td>
+                    <td>{fmt(item.change_amount)}</td>
+                    <td>{fmt(running)} {selected.unit}</td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>
