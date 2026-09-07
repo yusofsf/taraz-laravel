@@ -18,7 +18,6 @@ const PERMISSIONS = [
 const UNITS = ['عدد', 'گرم', 'مثقال', 'انس', 'کاغذ', 'ریال']
 const DIRECTIONS = ['خرید', 'فروش']
 const SETTLEMENT_METHODS = ['حواله', 'کاغذ', 'ریال']
-const GRANULARITIES = [['day', 'روز'], ['hour', 'ساعت'], ['minute', 'دقیقه']]
 
 const csrfMeta = () => document.querySelector('meta[name=csrf-token]')
 
@@ -170,15 +169,36 @@ function Dashboard({ user }) {
   const [data, setData] = useState({ products: [] })
   const [selected, setSelected] = useState(null)
   const [history, setHistory] = useState([])
+  const [range, setRange] = useState({ from: '', to: '' })
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
 
   const load = () => api('/api/dashboard').then(setData)
   useEffect(() => { load() }, [])
 
+  // اول دوره: ۱/۱ سال شمسی جاری
+  const fiscalFrom = useMemo(() => {
+    const year = (data.today_jalali || '').match(/(\d{4})/)
+    return year ? `${year[1]}/01/01` : ''
+  }, [data.today_jalali])
+
+  const fetchHistory = (id, r) => {
+    const query = new URLSearchParams()
+    if (r.from) query.set('from', r.from)
+    if (r.to) query.set('to', r.to)
+    api(`/api/products/${id}/history?${query.toString()}`).then(setHistory).catch(() => setHistory([]))
+  }
+
   const choose = (item) => {
     setSelected({ ...item })
-    api(`/api/products/${item.id}/history`).then(setHistory)
+    const r = { from: fiscalFrom, to: '' }
+    setRange(r)
+    fetchHistory(item.id, r)
+  }
+
+  const applyRange = (e) => {
+    e.preventDefault()
+    if (selected) fetchHistory(selected.id, range)
   }
   const save = (e) => {
     e.preventDefault()
@@ -224,7 +244,12 @@ function Dashboard({ user }) {
               <button disabled={busy}>ذخیره ویرایش</button>
             </form>
           )}
-          <BalanceLineChart items={history} />
+          <form className="form range-form" onSubmit={applyRange}>
+            <input placeholder="از تاریخ ۱۴۰۵/۰۱/۰۱" value={range.from} onChange={(q) => setRange({ ...range, from: q.target.value })} />
+            <input placeholder="تا تاریخ ۱۴۰۵/۰۶/۳۱" value={range.to} onChange={(q) => setRange({ ...range, to: q.target.value })} />
+            <button>نمایش بازه</button>
+          </form>
+          <ProductBalanceCharts history={history} unit={selected.unit} />
           <table>
             <thead><tr><th>تاریخ</th><th>شخص</th><th>کاربر</th><th>تغییر</th><th>تراز جدید</th></tr></thead>
             <tbody>
@@ -333,7 +358,6 @@ function Products({ user, ok }) {
           </small>
         </div>
       )}
-      <BalancePanel products={products} />
       <div className="panel">
         <h3>کالاها</h3>
         <table>
@@ -350,46 +374,45 @@ function Products({ user, ok }) {
 }
 
 /**
- * Shows the product balance chart (with minute/hour/day granularity) for a
- * chosen product, right inside the کالاها section.
+ * Two line charts for the selected product: positive balance changes
+ * (product added) on the right, negative changes (product removed) on the
+ * left. Points are ordered and labelled by date, hour and minute.
  */
-function BalancePanel({ products }) {
-  const [productId, setProductId] = useState('')
-  const [granularity, setGranularity] = useState('day')
-  const [history, setHistory] = useState([])
+function ProductBalanceCharts({ history, unit }) {
+  const positives = []
+  const negatives = []
 
-  useEffect(() => {
-    if (!productId) { setHistory([]); return }
-    api(`/api/products/${productId}/history`).then(setHistory).catch(() => setHistory([]))
-  }, [productId])
+  ;[...history].reverse().forEach((item) => {
+    if (!(item.change_amount > 0) && !(item.change_amount < 0)) return
+    const point = { name: item.created_at_jalali, مقدار: Math.abs(item.change_amount) }
+    ;(item.change_amount > 0 ? positives : negatives).push(point)
+  })
 
-  const selected = products.find((p) => String(p.id) === String(productId))
+  const chart = (data, title, color) => (
+    <div className="half-chart">
+      <small>{title} · {data.length} مورد</small>
+      {data.length
+        ? (
+          <div className="chart small">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={data} margin={{ top: 12, right: 16, bottom: 4, left: 4 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e8edf4" />
+                <XAxis dataKey="name" tick={{ fontSize: 10 }} reversed />
+                <YAxis tick={{ fontSize: 11 }} width={48} orientation="right" />
+                <Tooltip />
+                <Line type="monotone" dataKey="مقدار" stroke={color} strokeWidth={2} dot={{ r: 3 }} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        )
+        : <div className="empty">در این بازه داده‌ای ثبت نشده است.</div>}
+    </div>
+  )
 
   return (
-    <div className="panel">
-      <div className="panel-title">
-        <span>نمودار تراز کالا</span>
-        <small>تراز بر اساس دقیقه، ساعت یا روز</small>
-      </div>
-      <form className="form" onSubmit={(e) => e.preventDefault()}>
-        <select value={productId} onChange={(e) => setProductId(e.target.value)}>
-          <option value="">کالا را انتخاب کنید</option>
-          {products.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-        </select>
-        <select value={granularity} onChange={(e) => setGranularity(e.target.value)}>
-          {GRANULARITIES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-        </select>
-      </form>
-      {selected
-        ? (
-            <>
-              <small className="hint">تراز فعلی {selected.name}: {fmt(selected.quantity)} {selected.unit || 'عدد'} · {history.length} تغییر ثبت‌شده</small>
-              {history.length
-                ? <BalanceLineChart items={history} granularity={granularity} />
-                : <div className="empty">برای این کالا تغییری ثبت نشده است.</div>}
-            </>
-          )
-        : <div className="empty">برای دیدن نمودار، کالا را انتخاب کنید.</div>}
+    <div className="dual-charts">
+      {chart(positives, `افزایش کالا (${unit || 'عدد'})`, '#0da38c')}
+      {chart(negatives, `کاهش کالا (${unit || 'عدد'})`, '#d64545')}
     </div>
   )
 }

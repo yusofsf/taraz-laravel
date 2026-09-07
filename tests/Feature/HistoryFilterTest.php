@@ -70,6 +70,24 @@ class HistoryFilterTest extends TestCase
             ->assertStatus(422);
     }
 
+    public function test_product_history_filters_by_jalali_date_range(): void
+    {
+        $this->actingAsSession($this->admin)
+            ->getJson("/api/products/{$this->gold->id}/history?from=۱۴۰۵/۰۶/۰۱&to=۱۴۰۵/۰۶/۳۰")
+            ->assertOk()
+            ->assertJsonCount(1)
+            ->assertJsonPath('0.product_id', $this->gold->id);
+
+        $this->actingAsSession($this->admin)
+            ->getJson("/api/products/{$this->gold->id}/history?from=۱۴۰۵/۰۷/۰۱")
+            ->assertOk()
+            ->assertJsonCount(0);
+
+        $this->actingAsSession($this->admin)
+            ->getJson("/api/products/{$this->gold->id}/history?from=نامعتبر")
+            ->assertStatus(422);
+    }
+
     public function test_history_options_lists_involved_users_and_products(): void
     {
         $this->actingAsSession($this->admin)

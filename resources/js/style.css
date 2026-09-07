@@ -11,3 +11,4 @@ button.ghost{background:#eef2f7;color:#53617a}
 .badge.creditor,.chip.creditor{background:#e3f8f2;border-color:#12a58e;color:#087967}
 .badge.settled,.chip.settled{background:#eef2f7;border-color:#dbe3ee;color:#53617a}
 .hint{display:block;margin-top:10px;color:var(--muted);font-size:12px}
+.range-form{max-width:640px;margin:0 auto 18px;grid-template-columns:1fr 1fr auto}.dual-charts{display:grid;grid-template-columns:1fr 1fr;gap:16px}.half-chart{display:flex;flex-direction:column;gap:8px}.half-chart>small{color:var(--muted)}.half-chart .chart.small{height:280px}@media(max-width:800px){.dual-charts{grid-template-columns:1fr}}

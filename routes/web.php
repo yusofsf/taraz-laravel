@@ -6,7 +6,9 @@ use App\Http\Controllers\ProductController;
 use App\Http\Controllers\UserController;
 use App\Models\BalanceChange;
 use App\Models\Product;
+use App\Support\Jalali;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
 Route::view('/', 'app');
@@ -27,8 +29,21 @@ Route::middleware('web.auth')->group(function () {
     Route::get('/api/history/options', [ProductController::class, 'historyOptions']);
     Route::put('/api/history/{change}', [ProductController::class, 'updateChange'])->middleware('permission:can_edit_history');
     Route::delete('/api/history/{change}', [ProductController::class, 'destroyChange'])->middleware('permission:can_delete_history');
-    Route::get('/api/products/{product}/history', function (Product $product) {
-        return BalanceChange::with(['user:id,name', 'person:id,name'])->where('product_id', $product->id)->latest()->get();
+    Route::get('/api/products/{product}/history', function (Request $request, Product $product) {
+        $query = BalanceChange::with(['user:id,name', 'person:id,name'])->where('product_id', $product->id)->latest();
+
+        foreach (['from' => '>=', 'to' => '<='] as $field => $operator) {
+            try {
+                $gregorian = Jalali::parseJalaliInput($request->input($field));
+            } catch (InvalidArgumentException $exception) {
+                return response()->json(['message' => $exception->getMessage()], 422);
+            }
+            if ($gregorian !== null) {
+                $query->whereDate('created_at', $operator, $gregorian);
+            }
+        }
+
+        return $query->get();
     });
     Route::get('/api/persons', [PersonController::class, 'index']);
     Route::post('/api/persons', [PersonController::class, 'store'])->middleware('permission:can_edit_persons');
