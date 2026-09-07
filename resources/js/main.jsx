@@ -760,7 +760,10 @@ function Persons({ user, ok }) {
                                     <div className="chips">
                                       {person.products.map((product) => (
                                         <span className={`chip ${statusClass(product.status)}`} key={product.id}>
-                                          {product.name}: {fmt(product.quantity)} {product.unit || ''} · {product.status}
+                                          {product.name}:{' '}
+                                          {product.quantity === 0
+                                            ? 'تسویه'
+                                            : `${fmt(Math.abs(product.quantity))} ${product.unit || ''} ${product.status}`}
                                         </span>
                                       ))}
                                     </div>
