@@ -912,7 +912,7 @@ function Users({ user, ok }) {
                   )
                 : (
                     <tr key={item.id}>
-                      <td>{item.name}{item.is_admin && ' (مدیر کل)'}</td>
+                      <td>{item.name}{item.is_admin ? ' (مدیر کل)' : ''}</td>
                       <td>{item.mobile}</td>
                       <td>
                         {item.is_admin
