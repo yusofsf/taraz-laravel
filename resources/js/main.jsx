@@ -58,7 +58,10 @@ const api = async (url, opt = {}) => {
 
 const Msg = ({ x }) => x && <p className="msg">{x}</p>
 
-const fmt = (x) => +(+x).toFixed(3)
+// نمایش همه اعداد سایت با ارقام فارسی (ورودی فرم‌ها لاتین می‌ماند)
+const fa = (x) => String(x ?? '').replace(/[0-9.]/g, (c) => (c === '.' ? '٫' : '۰۱۲۳۴۵۶۷۸۹'[c]))
+
+const fmt = (x) => fa(+(+x).toFixed(3))
 
 const EMPTY_PRODUCT = { name: '', sku: '', quantity: 0, unit: 'عدد' }
 const EMPTY_CHANGE = { product_id: '', direction: 'خرید', quantity: '', unit_price: '', settlement_method: 'کاغذ', settlement_medium: 'ریال', settlement_date: '', person_id: '', from_person_id: '', to_person_id: '', note: '' }
@@ -79,9 +82,9 @@ function BalanceLineChart({ items, granularity = 'day' }) {
       <ResponsiveContainer width="100%" height="100%">
         <LineChart data={data} margin={{ top: 12, right: 24, bottom: 4, left: 4 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="#e8edf4" />
-          <XAxis dataKey="name" tick={{ fontSize: 11 }} reversed />
-          <YAxis tick={{ fontSize: 11 }} width={48} orientation="right" />
-          <Tooltip formatter={(value) => [value, 'تغییر']} />
+          <XAxis dataKey="name" tick={{ fontSize: 11 }} tickFormatter={fa} reversed />
+          <YAxis tick={{ fontSize: 11 }} width={48} orientation="right" tickFormatter={fa} />
+          <Tooltip formatter={(value) => [fa(value), 'تغییر']} />
           <Line type="monotone" dataKey="change" name="تغییر" stroke="#0da38c" strokeWidth={2} dot={{ r: 3 }} />
         </LineChart>
       </ResponsiveContainer>
@@ -121,7 +124,7 @@ function App() {
       <section>
         <header>
           <h2>{page}</h2>
-          <span>{user.name} · {user.mobile}</span>
+          <span>{user.name} · {fa(user.mobile)}</span>
         </header>
         <Msg x={msg} />
         {page === 'داشبورد' && <Dashboard user={user} />}
@@ -215,12 +218,12 @@ function Dashboard({ user }) {
       <Msg x={error} />
       <div className="cards">
         {[['تعداد کالاها', data.products?.length], ['تغییرات امروز', data.changes_today], ['کاربران', data.users]]
-          .map(([name, value]) => <article key={name}><small>{name}</small><b>{value || 0}</b></article>)}
+          .map(([name, value]) => <article key={name}><small>{name}</small><b>{fa(value || 0)}</b></article>)}
       </div>
       <div className="panel">
         <div className="panel-title">
           <span>تراز کالاها</span>
-          <small>{data.today_jalali ? `امروز: ${data.today_jalali}` : 'برای جزئیات روی کالا کلیک کنید'}</small>
+          <small>{data.today_jalali ? `امروز: ${fa(data.today_jalali)}` : 'برای جزئیات روی کالا کلیک کنید'}</small>
         </div>
         <div className="product-balance">
           {(data.products || []).map((item) => (
@@ -250,7 +253,7 @@ function Dashboard({ user }) {
             <button>نمایش بازه</button>
           </form>
           <small className="hint">
-            تراز از اول دوره ({fiscalFrom}): {fmt(history.reduce((sum, item) => sum + (+item.change_amount || 0), 0))} {selected.unit || 'عدد'}
+            تراز از اول دوره ({fa(fiscalFrom)}): {fmt(history.reduce((sum, item) => sum + (+item.change_amount || 0), 0))} {selected.unit || 'عدد'}
           </small>
           <ProductBalanceCharts history={history} unit={selected.unit} />
           <table>
@@ -261,7 +264,7 @@ function Dashboard({ user }) {
                 for (let i = 0; i <= index; i++) running += +all[i].change_amount || 0
                 return (
                   <tr key={item.id}>
-                    <td>{item.created_at_jalali}</td>
+                    <td>{fa(item.created_at_jalali)}</td>
                     <td>{item.person?.name || '—'}</td>
                     <td>{item.user?.name}</td>
                     <td>{fmt(item.change_amount)}</td>
@@ -409,7 +412,7 @@ function ProductBalanceCharts({ history, unit }) {
     <div className="half-chart">
       <div className="half-chart-title" style={{ '--dot': color }}>
         <span>{title}</span>
-        <small>{data.length} مورد</small>
+        <small>{fa(data.length)} مورد</small>
       </div>
       {data.length
         ? (
@@ -423,8 +426,8 @@ function ProductBalanceCharts({ history, unit }) {
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e8edf4" vertical={false} />
-                <XAxis dataKey="name" tick={{ fontSize: 10, fill: '#73809a' }} tickLine={false} axisLine={{ stroke: '#e8edf4' }} reversed />
-                <YAxis tick={{ fontSize: 11, fill: '#73809a' }} tickLine={false} axisLine={false} width={52} orientation="right" />
+                <XAxis dataKey="name" tick={{ fontSize: 10, fill: '#73809a' }} tickFormatter={fa} tickLine={false} axisLine={{ stroke: '#e8edf4' }} reversed />
+                <YAxis tick={{ fontSize: 11, fill: '#73809a' }} tickFormatter={fa} tickLine={false} axisLine={false} width={52} orientation="right" />
                 <Tooltip content={tooltip(unit)} />
                 <Area type="monotone" dataKey="مقدار" stroke={color} strokeWidth={2.5} fill={`url(#${id})`} dot={{ r: 3.5, fill: color, strokeWidth: 0 }} activeDot={{ r: 5.5, strokeWidth: 2, stroke: '#fff' }} />
               </AreaChart>
@@ -469,12 +472,12 @@ function TodayInvoices() {
   return (
     <>
       <div className="cards">
-        {cards.map(([name, value]) => <article key={name}><small>{name}</small><b>{value || 0}</b></article>)}
+        {cards.map(([name, value]) => <article key={name}><small>{name}</small><b>{fa(value || 0)}</b></article>)}
       </div>
       <div className="panel">
         <div className="panel-title">
           <span>فاکتورهای امروز</span>
-          <small>{data.today_jalali} · خرید: {stats.buy_count || 0} · فروش: {stats.sale_count || 0}</small>
+          <small>{fa(data.today_jalali)} · خرید: {fa(stats.buy_count || 0)} · فروش: {fa(stats.sale_count || 0)}</small>
         </div>
         {data.invoices?.length
           ? (
@@ -488,14 +491,14 @@ function TodayInvoices() {
                 <tbody>
                   {data.invoices.map((item) => (
                     <tr key={item.id}>
-                      <td>{item.created_at_jalali?.slice(-5) || '—'}</td>
+                      <td>{fa(item.created_at_jalali?.slice(-5) || '—')}</td>
                       <td>{item.product?.name || '—'}</td>
                       <td className={item.direction === 'خرید' ? 'up' : 'down'}>{item.direction || 'تعدیل'}</td>
                       <td>{fmt(item.change_amount)} {item.product?.unit || ''}</td>
                       <td>{item.unit_price ? fmt(item.unit_price) : '—'}</td>
                       <td>{item.total_price ? fmt(item.total_price) : '—'}</td>
                       <td>{item.settlement_method || '—'}</td>
-                      <td>{item.settlement_date_jalali || '—'}</td>
+                      <td>{fa(item.settlement_date_jalali || '—')}</td>
                       <td>
                         {item.from_person && item.to_person
                           ? `${item.from_person.name} → ${item.to_person.name}`
@@ -648,7 +651,7 @@ function History({ user, ok }) {
         ? <BalanceLineChart items={items} />
         : <div className="panel"><div className="empty">با این فیلترها تغییری یافت نشد.</div></div>}
       <div className="panel">
-        <div className="panel-title"><span>ریز تغییرات</span><small>{items.length} مورد</small></div>
+        <div className="panel-title"><span>ریز تغییرات</span><small>{fa(items.length)} مورد</small></div>
         <table>
           <thead><tr><th>تاریخ</th><th>کالا</th><th>شخص</th><th>کاربر</th><th>تغییر</th>{(canEdit || canDelete) && <th>عملیات</th>}</tr></thead>
           <tbody>
@@ -672,7 +675,7 @@ function History({ user, ok }) {
                   )
                 : (
                     <tr key={item.id}>
-                      <td>{item.created_at_jalali}</td>
+                      <td>{fa(item.created_at_jalali)}</td>
                       <td>{item.product?.name || '—'}</td>
                       <td>{item.person?.name || '—'}</td>
                       <td>{item.user?.name || '—'}</td>
@@ -697,7 +700,7 @@ function History({ user, ok }) {
 const statusClass = (status) => (status === 'بدهکار' ? 'debtor' : status === 'طلبکار' ? 'creditor' : status === 'تسویه' ? 'settled' : '')
 
 // موبایل «0» یا خالی به‌عنوان بدون موبایل نمایش داده می‌شود
-const displayMobile = (mobile) => (mobile && String(mobile).trim() !== '0' ? mobile : 'بدون موبایل')
+const displayMobile = (mobile) => (mobile && String(mobile).trim() !== '0' ? fa(mobile) : 'بدون موبایل')
 
 function Persons({ user, ok }) {
   const [persons, setPersons] = useState([])
@@ -753,7 +756,7 @@ function Persons({ user, ok }) {
     return acc
   }, {})
   const summary = [['بدهکار', counts['بدهکار'] || 0], ['طلبکار', counts['طلبکار'] || 0], ['تسویه', counts['تسویه'] || 0]]
-    .map(([name, value]) => `${name}: ${value}`)
+    .map(([name, value]) => `${name}: ${fa(value)}`)
     .join(' · ')
 
   return (
@@ -773,7 +776,7 @@ function Persons({ user, ok }) {
       <div className="panel">
         <div className="panel-title">
           <span>اشخاص و تراز آن‌ها</span>
-          <small>{persons.length} شخص · {summary}</small>
+          <small>{fa(persons.length)} شخص · {summary}</small>
         </div>
         <form className="form" onSubmit={submitSearch}>
           <input placeholder="جست‌وجو بر اساس نام یا شماره موبایل" value={search} onChange={(e) => setSearch(e.target.value)} />
@@ -857,7 +860,7 @@ function Users({ user, ok }) {
     if (busy) return
     setBusy(true)
     api('/api/users', { method: 'POST', body: form })
-      .then(() => { load(); setForm(EMPTY_USER); ok('کاربر با رمز 123456789 ساخته شد.') })
+      .then(() => { load(); setForm(EMPTY_USER); ok('کاربر با رمز ۱۲۳۴۵۶۷۸۹ ساخته شد.') })
       .catch((x) => setError(x.message))
       .finally(() => setBusy(false))
   }
@@ -913,7 +916,7 @@ function Users({ user, ok }) {
                 : (
                     <tr key={item.id}>
                       <td>{item.name}{item.is_admin ? ' (مدیر کل)' : ''}</td>
-                      <td>{item.mobile}</td>
+                      <td>{fa(item.mobile)}</td>
                       <td>
                         {item.is_admin
                           ? 'همه دسترسی‌ها'
