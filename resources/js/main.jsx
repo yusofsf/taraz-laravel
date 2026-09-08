@@ -74,6 +74,7 @@ function BalanceLineChart({ items, granularity = 'day' }) {
     let name = item.created_at_jalali?.slice(0, 10) || ''
     if (date && granularity === 'hour') name += ` ${String(date.getHours()).padStart(2, '0')}:00`
     if (date && granularity === 'minute') name += ` ${item.created_at_jalali?.slice(-5) || ''}`
+    if (granularity === 'day') name += ` ${item.created_at_jalali?.slice(-5) || ''}`
     return { name, change: item.change_amount }
   }), [items, granularity])
 
@@ -82,7 +83,7 @@ function BalanceLineChart({ items, granularity = 'day' }) {
       <ResponsiveContainer width="100%" height="100%">
         <LineChart data={data} margin={{ top: 12, right: 24, bottom: 4, left: 4 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="#e8edf4" />
-          <XAxis dataKey="name" tick={{ fontSize: 11 }} tickFormatter={fa} reversed />
+          <XAxis dataKey="name" tick={{ fontSize: 11 }} tickFormatter={fa} />
           <YAxis tick={{ fontSize: 11 }} width={48} orientation="right" tickFormatter={fa} />
           <Tooltip formatter={(value) => [fa(value), 'تغییر']} />
           <Line type="monotone" dataKey="change" name="تغییر" stroke="#0da38c" strokeWidth={2} dot={{ r: 3 }} />
@@ -406,7 +407,7 @@ function ProductBalanceCharts({ history, unit }) {
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e8edf4" vertical={false} />
-                <XAxis dataKey="name" tick={{ fontSize: 10, fill: '#73809a' }} tickFormatter={fa} tickLine={false} axisLine={{ stroke: '#e8edf4' }} reversed />
+                <XAxis dataKey="name" tick={{ fontSize: 10, fill: '#73809a' }} tickFormatter={fa} tickLine={false} axisLine={{ stroke: '#e8edf4' }} />
                 <YAxis tick={{ fontSize: 11, fill: '#73809a' }} tickFormatter={fa} tickLine={false} axisLine={false} width={52} orientation="right" />
                 <Tooltip content={tooltip(unit)} />
                 <Area type="monotone" dataKey="مقدار" stroke={color} strokeWidth={2.5} fill={`url(#${id})`} dot={{ r: 3.5, fill: color, strokeWidth: 0 }} activeDot={{ r: 5.5, strokeWidth: 2, stroke: '#fff' }} />
