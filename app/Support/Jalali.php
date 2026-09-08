@@ -14,6 +14,10 @@ class Jalali
         'مهر', 'آبان', 'آذر', 'دی', 'بهمن', 'اسفند',
     ];
 
+    private const WEEKDAYS = [
+        'یکشنبه', 'دوشنبه', 'سه‌شنبه', 'چهارشنبه', 'پنجشنبه', 'جمعه', 'شنبه',
+    ];
+
     private const GREGORIAN_CUMULATIVE_DAYS = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
 
     public static function format(?CarbonInterface $date, bool $withTime = true): ?string
@@ -39,7 +43,7 @@ class Jalali
 
         [$year, $month, $day] = self::toJalali($date->year, $date->month, $date->day);
 
-        return sprintf('%d %s %d', $day, self::MONTHS[$month - 1], $year);
+        return sprintf('%s %d %s %d', self::WEEKDAYS[$date->dayOfWeek], $day, self::MONTHS[$month - 1], $year);
     }
 
     /**
