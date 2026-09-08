@@ -173,7 +173,6 @@ function Dashboard({ user }) {
   const [history, setHistory] = useState([])
   const [range, setRange] = useState({ from: '', to: '' })
   const [error, setError] = useState('')
-  const [busy, setBusy] = useState(false)
 
   const load = () => api('/api/dashboard').then(setData)
   useEffect(() => { load() }, [])
@@ -203,15 +202,6 @@ function Dashboard({ user }) {
     e.preventDefault()
     if (selected) fetchHistory(selected.id, range)
   }
-  const save = (e) => {
-    e.preventDefault()
-    if (busy) return
-    setBusy(true)
-    api(`/api/products/${selected.id}`, { method: 'PUT', body: selected })
-      .then(() => { setError('کالا و تراز اولیه ذخیره شد.'); load(); choose(selected) })
-      .catch((z) => setError(z.message))
-      .finally(() => setBusy(false))
-  }
 
   return (
     <>
@@ -237,16 +227,6 @@ function Dashboard({ user }) {
       {selected && (
         <div className="panel">
           <h3>جزئیات {selected.name}</h3>
-          {(user.is_admin || user.can_edit_products) && (
-            <form className="form" onSubmit={save}>
-              <input value={selected.name} onChange={(q) => setSelected({ ...selected, name: q.target.value })} />
-              <input type="number" value={selected.quantity} step="any" onChange={(q) => setSelected({ ...selected, quantity: +q.target.value })} />
-              <select value={selected.unit} onChange={(q) => setSelected({ ...selected, unit: q.target.value })}>
-                {UNITS.map((u) => <option key={u}>{u}</option>)}
-              </select>
-              <button disabled={busy}>ذخیره ویرایش</button>
-            </form>
-          )}
           <form className="form range-form" onSubmit={applyRange}>
             <input placeholder="از تاریخ ۱۴۰۵/۰۱/۰۱" value={range.from} onChange={(q) => setRange({ ...range, from: q.target.value })} />
             <input placeholder="تا تاریخ ۱۴۰۵/۰۶/۳۱" value={range.to} onChange={(q) => setRange({ ...range, to: q.target.value })} />
