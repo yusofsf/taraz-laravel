@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { Area, AreaChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import './style.css'
@@ -748,6 +748,7 @@ function Persons({ user, ok }) {
   const [search, setSearch] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const editFormRef = useRef(null)
 
   const canEdit = user.is_admin || user.can_edit_persons
   const canDelete = user.is_admin || user.can_delete_persons
@@ -757,6 +758,11 @@ function Persons({ user, ok }) {
     return api(`/api/persons${query}`).then(setPersons).catch(() => setPersons([]))
   }
   useEffect(() => { load() }, [])
+
+  const startEdit = (person) => {
+    setEditing({ id: person.id, name: person.name, mobile: person.mobile || '', note: person.note || '' })
+    setTimeout(() => editFormRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' }), 0)
+  }
 
   const submitSearch = (e) => {
     e.preventDefault()
@@ -802,13 +808,14 @@ function Persons({ user, ok }) {
     <>
       <Msg x={error} />
       {canEdit && (
-        <div className="panel">
-          <h3>افزودن شخص</h3>
-          <form className="form" onSubmit={submit}>
-            <input required placeholder="نام شخص" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
-            <input placeholder="موبایل (اختیاری)" value={form.mobile} onChange={(e) => setForm({ ...form, mobile: e.target.value })} />
-            <input placeholder="یادداشت" value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} />
-            <button disabled={busy}>افزودن</button>
+        <div className="panel" ref={editFormRef}>
+          <h3>{editing ? `ویرایش شخص: ${editing.name}` : 'افزودن شخص'}</h3>
+          <form className="form" onSubmit={editing ? saveEdit : submit}>
+            <input required placeholder="نام شخص" value={editing ? editing.name : form.name} onChange={(e) => editing ? setEditing({ ...editing, name: e.target.value }) : setForm({ ...form, name: e.target.value })} />
+            <input placeholder="موبایل (اختیاری)" value={editing ? editing.mobile : form.mobile} onChange={(e) => editing ? setEditing({ ...editing, mobile: e.target.value }) : setForm({ ...form, mobile: e.target.value })} />
+            <input placeholder="یادداشت" value={editing ? editing.note : form.note} onChange={(e) => editing ? setEditing({ ...editing, note: e.target.value }) : setForm({ ...form, note: e.target.value })} />
+            <button disabled={busy}>{editing ? 'ذخیره' : 'افزودن'}</button>
+            {editing && <button type="button" className="ghost" onClick={() => setEditing(null)}>انصراف</button>}
           </form>
         </div>
       )}
@@ -827,43 +834,29 @@ function Persons({ user, ok }) {
                 {persons.map((person) => (
                   <article key={person.id}>
                     <div>
-                      {editing?.id === person.id
+                      <strong>{person.name}{person.status && <span className={`badge ${statusClass(person.status)}`}>{person.status}</span>}</strong>
+                      <small>{displayMobile(person.mobile)}</small>
+                      {person.note && <small>{person.note}</small>}
+                      {(canEdit || canDelete) && (
+                        <div className="chips">
+                          {canEdit && <button type="button" onClick={() => startEdit(person)}>ویرایش</button>}
+                          {canDelete && <button type="button" className="ghost" onClick={() => remove(person)}>حذف</button>}
+                        </div>
+                      )}
+                      {person.products?.length
                         ? (
-                            <form className="form" onSubmit={saveEdit}>
-                              <input required placeholder="نام شخص" value={editing.name} onChange={(e) => setEditing({ ...editing, name: e.target.value })} />
-                              <input placeholder="موبایل (اختیاری)" value={editing.mobile || ''} onChange={(e) => setEditing({ ...editing, mobile: e.target.value })} />
-                              <input placeholder="یادداشت" value={editing.note || ''} onChange={(e) => setEditing({ ...editing, note: e.target.value })} />
-                              <button disabled={busy}>ذخیره</button>
-                              <button type="button" className="ghost" onClick={() => setEditing(null)}>انصراف</button>
-                            </form>
+                            <div className="chips">
+                              {person.products.map((product) => (
+                                <span className={`chip ${statusClass(product.status)}`} key={product.id}>
+                                  {product.name}:{' '}
+                                  {product.quantity === 0
+                                    ? 'تسویه'
+                                    : `${fmt(Math.abs(product.quantity))} ${product.unit || ''} ${product.status}`}
+                                </span>
+                              ))}
+                            </div>
                           )
-                        : (
-                            <>
-                              <strong>{person.name}{person.status && <span className={`badge ${statusClass(person.status)}`}>{person.status}</span>}</strong>
-                              <small>{displayMobile(person.mobile)}</small>
-                              {person.note && <small>{person.note}</small>}
-                              {(canEdit || canDelete) && (
-                                <div className="chips">
-                                  {canEdit && <button type="button" onClick={() => setEditing({ ...person })}>ویرایش</button>}
-                                  {canDelete && <button type="button" className="ghost" onClick={() => remove(person)}>حذف</button>}
-                                </div>
-                              )}
-                              {person.products?.length
-                                ? (
-                                    <div className="chips">
-                                      {person.products.map((product) => (
-                                        <span className={`chip ${statusClass(product.status)}`} key={product.id}>
-                                          {product.name}:{' '}
-                                          {product.quantity === 0
-                                            ? 'تسویه'
-                                            : `${fmt(Math.abs(product.quantity))} ${product.unit || ''} ${product.status}`}
-                                        </span>
-                                      ))}
-                                    </div>
-                                  )
-                                : <div className="chips"><span className="chip settled">تسویه</span></div>}
-                            </>
-                          )}
+                        : <div className="chips"><span className="chip settled">تسویه</span></div>}
                     </div>
                   </article>
                 ))}
