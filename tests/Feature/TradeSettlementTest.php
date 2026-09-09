@@ -67,6 +67,7 @@ class TradeSettlementTest extends TestCase
                 'quantity' => 1.5,
                 'unit_price' => 2000,
                 'settlement_method' => 'ریال',
+                'settlement_date' => '1405/06/01',
             ])
             ->assertStatus(201);
 
@@ -84,6 +85,7 @@ class TradeSettlementTest extends TestCase
                 'unit_price' => 500,
                 'settlement_method' => 'حواله',
                 'settlement_medium' => 'ریال',
+                'settlement_date' => '1405/06/01',
                 'from_person_id' => $this->ali->id,
                 'to_person_id' => $this->reza->id,
             ])
@@ -119,6 +121,7 @@ class TradeSettlementTest extends TestCase
                 'quantity' => 2,
                 'unit_price' => 1000,
                 'settlement_method' => 'کاغذ',
+                'settlement_date' => '1405/06/01',
                 'person_id' => $this->ali->id,
             ])
             ->assertStatus(201);
@@ -144,6 +147,7 @@ class TradeSettlementTest extends TestCase
                     'quantity' => $quantity,
                     'unit_price' => $price,
                     'settlement_method' => 'کاغذ',
+                    'settlement_date' => '1405/06/01',
                 ])
                 ->assertStatus(201);
         }
@@ -161,6 +165,50 @@ class TradeSettlementTest extends TestCase
         $this->assertEquals(2.0, $stats['avg_buy_weight']);
         $this->assertEquals(1.0, $stats['avg_sale_weight']);
         $this->assertEquals(1.0, $stats['balance']);
+    }
+
+    public function test_trade_without_record_in_balance_does_not_touch_balances(): void
+    {
+        $this->actingAsSession($this->admin)
+            ->postJson('/api/products/'.$this->gold->id.'/balance', [
+                'direction' => 'خرید',
+                'record_in_balance' => false,
+                'quantity' => 2,
+                'unit_price' => 1000,
+                'settlement_method' => 'کاغذ',
+                'settlement_date' => '1405/06/01',
+                'person_id' => $this->ali->id,
+            ])
+            ->assertStatus(201);
+
+        $trade = BalanceChange::where('type', 'trade')->first();
+
+        $this->assertSame(0.0, (float) $this->gold->fresh()->quantity);
+        $this->assertSame(0.0, (float) Product::where('name', 'کاغذ')->value('quantity'));
+        $this->assertFalse((bool) PersonProduct::where('person_id', $this->ali->id)->count());
+        $this->assertFalse((bool) $trade->record_in_balance);
+        $this->assertEquals(2.0, (float) $trade->change_amount);
+        $this->assertSame(0, BalanceChange::where('type', 'settlement')->count());
+
+        // حذفش هم تراز را تغییر نمی‌دهد
+        $this->actingAsSession($this->admin)
+            ->deleteJson('/api/history/'.$trade->id)
+            ->assertStatus(204);
+
+        $this->assertSame(0.0, (float) $this->gold->fresh()->quantity);
+    }
+
+    public function test_settlement_date_is_required(): void
+    {
+        $this->actingAsSession($this->admin)
+            ->postJson('/api/products/'.$this->gold->id.'/balance', [
+                'direction' => 'خرید',
+                'quantity' => 1,
+                'unit_price' => 100,
+                'settlement_method' => 'کاغذ',
+            ])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('settlement_date');
     }
 
     private function actingAsSession(User $user): self

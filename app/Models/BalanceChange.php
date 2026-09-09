@@ -17,7 +17,7 @@ class BalanceChange extends Model
 
     protected $fillable = [
         'product_id', 'user_id', 'person_id', 'from_person_id', 'to_person_id',
-        'type', 'direction', 'change_amount', 'unit_price', 'total_price',
+        'type', 'direction', 'record_in_balance', 'change_amount', 'unit_price', 'total_price',
         'settlement_method', 'settlement_date', 'previous_quantity', 'new_quantity',
         'note', 'parent_id',
     ];
@@ -28,6 +28,7 @@ class BalanceChange extends Model
     {
         return [
             'change_amount' => 'float',
+            'record_in_balance' => 'boolean',
             'previous_quantity' => 'float',
             'new_quantity' => 'float',
             'unit_price' => 'float',

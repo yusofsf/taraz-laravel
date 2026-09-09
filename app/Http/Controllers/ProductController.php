@@ -110,8 +110,10 @@ class ProductController extends Controller
 
         $data = $request->validate([
             'direction' => 'required|in:خرید,فروش',
+            'record_in_balance' => 'nullable|boolean',
             'quantity' => $this->quantityRule($product->unit).'|not_in:0',
             'unit_price' => 'required|numeric|min:0.01',
+            'settlement_date' => 'required|string',
             'settlement_method' => 'required|in:حواله,کاغذ,ریال',
             'person_id' => 'nullable|integer|exists:persons,id',
             'from_person_id' => 'nullable|integer|exists:persons,id',
@@ -141,13 +143,17 @@ class ProductController extends Controller
             $unitPrice = (float) $data['unit_price'];
             $total = round($quantity * $unitPrice, 2);
             $signed = $data['direction'] === 'خرید' ? $quantity : -$quantity;
+            $inBalance = (bool) ($data['record_in_balance'] ?? true);
 
+            // وقتی «ثبت در تراز» تیک نخورده باشد فقط معامله ثبت می‌شود و تراز کالا/شخص دست‌نخورده می‌ماند
             $previous = $product->quantity;
-            $product->increment('quantity', $signed);
-            $product->refresh();
+            if ($inBalance) {
+                $product->increment('quantity', $signed);
+                $product->refresh();
 
-            if (! empty($data['person_id'])) {
-                $this->adjustPersonBalance((int) $data['person_id'], $product->id, $signed);
+                if (! empty($data['person_id'])) {
+                    $this->adjustPersonBalance((int) $data['person_id'], $product->id, $signed);
+                }
             }
 
             $trade = BalanceChange::create([
@@ -156,17 +162,20 @@ class ProductController extends Controller
                 'person_id' => $data['person_id'] ?? null,
                 'type' => BalanceChange::TYPE_TRADE,
                 'direction' => $data['direction'],
+                'record_in_balance' => $inBalance,
                 'change_amount' => $signed,
                 'unit_price' => $unitPrice,
                 'total_price' => $total,
                 'settlement_method' => $method,
                 'settlement_date' => $gregorian,
                 'previous_quantity' => $previous,
-                'new_quantity' => $product->quantity,
+                'new_quantity' => $inBalance ? $product->quantity : $previous,
                 'note' => $data['note'] ?? null,
             ]);
 
-            $this->applySettlement($trade, $data['direction'], $total, $method, $data);
+            if ($inBalance) {
+                $this->applySettlement($trade, $data['direction'], $total, $method, $data);
+            }
 
             return $trade->fresh(['product', 'person', 'fromPerson', 'toPerson']);
         }), 201);
@@ -365,18 +374,21 @@ class ProductController extends Controller
 
         return response()->json(DB::transaction(function () use ($data, $change, $product) {
             $newAmount = (float) $data['amount'];
-            $product->increment('quantity', $newAmount - $change->change_amount);
 
-            $this->movePersonBalance($change, $newAmount, $data['person_id'] ?? null);
+            // رکوردهای بدون «ثبت در تراز» فقط معامله‌اند و ویرایششان تراز را تغییر نمی‌دهد
+            if ($change->record_in_balance) {
+                $product->increment('quantity', $newAmount - $change->change_amount);
+                $this->movePersonBalance($change, $newAmount, $data['person_id'] ?? null);
+            }
 
             $change->update([
                 'person_id' => $data['person_id'] ?? null,
                 'change_amount' => $newAmount,
-                'new_quantity' => $change->previous_quantity + $newAmount,
+                'new_quantity' => $change->record_in_balance ? $change->previous_quantity + $newAmount : $change->previous_quantity,
                 'note' => $data['note'] ?? null,
             ]);
 
-            if ($change->type === BalanceChange::TYPE_TRADE) {
+            if ($change->type === BalanceChange::TYPE_TRADE && $change->record_in_balance) {
                 $this->syncTradeSettlement($change, $newAmount);
             }
 
@@ -436,14 +448,17 @@ class ProductController extends Controller
         $product = $change->product;
 
         DB::transaction(function () use ($change, $product) {
-            if ($change->type === BalanceChange::TYPE_TRADE) {
-                $this->reverseTradeSettlement($change);
-            }
+            // رکوردهای بدون «ثبت در تراز» هیچ اثری روی تراز ندارند؛ فقط خودشان حذف می‌شوند
+            if ($change->record_in_balance) {
+                if ($change->type === BalanceChange::TYPE_TRADE) {
+                    $this->reverseTradeSettlement($change);
+                }
 
-            $product->decrement('quantity', $change->change_amount);
+                $product->decrement('quantity', $change->change_amount);
 
-            if ($change->person_id) {
-                $this->adjustPersonBalance($change->person_id, $product->id, -$change->change_amount);
+                if ($change->person_id) {
+                    $this->adjustPersonBalance($change->person_id, $product->id, -$change->change_amount);
+                }
             }
 
             BalanceChange::where('parent_id', $change->id)->delete();
@@ -517,6 +532,7 @@ class ProductController extends Controller
     private function recomputeProductHistory(Product $product): void
     {
         $changes = BalanceChange::where('product_id', $product->id)
+            ->where('record_in_balance', true)
             ->orderBy('created_at')
             ->orderBy('id')
             ->get();

@@ -64,7 +64,7 @@ const fa = (x) => String(x ?? '').replace(/[0-9.]/g, (c) => (c === '.' ? '٫' : 
 const fmt = (x) => fa(+(+x).toFixed(3))
 
 const EMPTY_PRODUCT = { name: '', sku: '', quantity: 0, unit: 'عدد' }
-const EMPTY_CHANGE = { product_id: '', direction: 'خرید', quantity: '', unit_price: '', settlement_method: 'کاغذ', settlement_medium: 'ریال', settlement_date: '', person_id: '', from_person_id: '', to_person_id: '', note: '' }
+const EMPTY_CHANGE = { product_id: '', direction: 'خرید', record_in_balance: true, quantity: '', unit_price: '', settlement_method: 'کاغذ', settlement_medium: 'ریال', settlement_date: '', person_id: '', from_person_id: '', to_person_id: '', note: '' }
 const EMPTY_PERSON = { name: '', mobile: '', note: '' }
 const EMPTY_USER = { name: '', mobile: '', can_add_users: false, can_add_products: false, can_edit_products: false, can_change_balance: false, can_edit_history: false, can_delete_history: false, can_edit_persons: false, can_delete_persons: false, can_manage_permissions: false }
 
@@ -314,6 +314,9 @@ function Products({ user, ok }) {
             <select value={change.direction} onChange={(x) => setChange({ ...change, direction: x.target.value })}>
               {DIRECTIONS.map((d) => <option key={d}>{d}</option>)}
             </select>
+            <label className="check">
+              <input type="checkbox" checked={change.record_in_balance} onChange={(x) => setChange({ ...change, record_in_balance: x.target.checked })} />ثبت در تراز
+            </label>
             <input required type="number" step="any" placeholder={`مقدار (${change.direction === 'خرید' ? 'ورود کالا' : 'خروج کالا'})`} value={change.quantity} onChange={(x) => setChange({ ...change, quantity: x.target.value })} />
             <input required type="number" step="any" placeholder="قیمت هر واحد/گرم" value={change.unit_price} onChange={(x) => setChange({ ...change, unit_price: x.target.value })} />
             <select value={change.settlement_method} onChange={(x) => setChange({ ...change, settlement_method: x.target.value })}>
@@ -339,13 +342,19 @@ function Products({ user, ok }) {
               <option value="">طرف معامله (اختیاری)</option>
               {persons.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
-            <input placeholder="تاریخ تسویه شمسی ۱۴۰۵/۰۶/۰۱" value={change.settlement_date} onChange={(x) => setChange({ ...change, settlement_date: x.target.value })} />
+            <input required placeholder="تاریخ تسویه شمسی ۱۴۰۵/۰۶/۰۱" value={change.settlement_date} onChange={(x) => setChange({ ...change, settlement_date: x.target.value })} />
             <input placeholder="یادداشت" value={change.note} onChange={(x) => setChange({ ...change, note: x.target.value })} />
             <button disabled={busy}>ثبت {change.direction}</button>
           </form>
           <small className="hint">
-            مبلغ کل: {fmt((+change.quantity || 0) * (+change.unit_price || 0))} ·
-            {' '}با تسویه {change.settlement_method === 'حواله' ? `حواله (${change.settlement_medium})` : change.settlement_method} مبلغ از محصول {change.settlement_method === 'کاغذ' ? 'کاغذ' : 'ریال'} کم/زیاد می‌شود؛ حواله بین دو شخص جابه‌جا می‌شود.
+            {change.record_in_balance
+              ? (
+                  <>
+                    مبلغ کل: {fmt((+change.quantity || 0) * (+change.unit_price || 0))} ·
+                    {' '}با تسویه {change.settlement_method === 'حواله' ? `حواله (${change.settlement_medium})` : change.settlement_method} مبلغ از محصول {change.settlement_method === 'کاغذ' ? 'کاغذ' : 'ریال'} کم/زیاد می‌شود؛ حواله بین دو شخص جابه‌جا می‌شود.
+                  </>
+                )
+              : <>مبلغ کل: {fmt((+change.quantity || 0) * (+change.unit_price || 0))} · بدون «ثبت در تراز» فقط معامله ثبت می‌شود و تراز کالا و اشخاص تغییر نمی‌کند.</>}
           </small>
         </div>
       )}
