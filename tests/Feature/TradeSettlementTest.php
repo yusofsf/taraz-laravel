@@ -211,6 +211,58 @@ class TradeSettlementTest extends TestCase
             ->assertJsonValidationErrors('settlement_date');
     }
 
+    public function test_toggling_record_in_balance_applies_and_removes_balance_effects(): void
+    {
+        $this->actingAsSession($this->admin)
+            ->postJson('/api/products/'.$this->gold->id.'/balance', [
+                'direction' => 'خرید',
+                'record_in_balance' => false,
+                'quantity' => 2,
+                'unit_price' => 1000,
+                'settlement_method' => 'کاغذ',
+                'settlement_date' => '1405/06/01',
+                'person_id' => $this->ali->id,
+            ])
+            ->assertStatus(201);
+
+        $trade = BalanceChange::where('type', 'trade')->first();
+
+        // تیک را می‌گذاریم: تراز کالا، شخص و تسویه باید اعمال شود
+        $this->actingAsSession($this->admin)
+            ->putJson('/api/history/'.$trade->id, [
+                'amount' => 2,
+                'record_in_balance' => true,
+                'person_id' => $this->ali->id,
+            ])
+            ->assertStatus(200);
+
+        $trade = $trade->fresh();
+        $paper = Product::where('name', 'کاغذ')->first();
+
+        $this->assertTrue((bool) $trade->record_in_balance);
+        $this->assertSame(2.0, (float) $this->gold->fresh()->quantity);
+        $this->assertSame(-2000.0, (float) $paper->quantity);
+        $this->assertSame(2.0, (float) PersonProduct::where('person_id', $this->ali->id)->where('product_id', $this->gold->id)->value('quantity'));
+        $this->assertSame(1, BalanceChange::where('type', 'settlement')->count());
+
+        // تیک را برمی‌داریم: همه اثرها باید برگردد
+        $this->actingAsSession($this->admin)
+            ->putJson('/api/history/'.$trade->id, [
+                'amount' => 2,
+                'record_in_balance' => false,
+                'person_id' => $this->ali->id,
+            ])
+            ->assertStatus(200);
+
+        $trade = $trade->fresh();
+
+        $this->assertFalse((bool) $trade->record_in_balance);
+        $this->assertSame(0.0, (float) $this->gold->fresh()->quantity);
+        $this->assertSame(0.0, (float) $paper->fresh()->quantity);
+        $this->assertSame(0.0, (float) PersonProduct::where('person_id', $this->ali->id)->where('product_id', $this->gold->id)->value('quantity'));
+        $this->assertSame(0, BalanceChange::where('type', 'settlement')->count());
+    }
+
     private function actingAsSession(User $user): self
     {
         return $this->withSession(['user_id' => $user->id]);

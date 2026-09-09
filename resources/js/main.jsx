@@ -69,7 +69,7 @@ const EMPTY_PERSON = { name: '', mobile: '', note: '' }
 const EMPTY_USER = { name: '', mobile: '', can_add_users: false, can_add_products: false, can_edit_products: false, can_change_balance: false, can_edit_history: false, can_delete_history: false, can_edit_persons: false, can_delete_persons: false, can_manage_permissions: false }
 
 function BalanceLineChart({ items, granularity = 'day' }) {
-  const data = useMemo(() => [...items].reverse().map((item) => {
+  const data = useMemo(() => [...items].filter((item) => item.record_in_balance !== false).reverse().map((item) => {
     const date = item.created_at ? new Date(item.created_at) : null
     let name = item.created_at_jalali?.slice(0, 10) || ''
     if (date && granularity === 'hour') name += ` ${String(date.getHours()).padStart(2, '0')}:00`
@@ -234,7 +234,7 @@ function Dashboard({ user }) {
             <button>نمایش بازه</button>
           </form>
           <small className="hint">
-            تراز از اول دوره ({fa(fiscalFrom)}): {fmt(history.reduce((sum, item) => sum + (+item.change_amount || 0), 0))} {selected.unit || 'عدد'}
+            تراز از اول دوره ({fa(fiscalFrom)}): {fmt(history.filter((item) => item.record_in_balance !== false).reduce((sum, item) => sum + (+item.change_amount || 0), 0))} {selected.unit || 'عدد'}
           </small>
           <ProductBalanceCharts history={history} unit={selected.unit} />
           <table>
@@ -242,7 +242,7 @@ function Dashboard({ user }) {
             <tbody>
               {[...history].reverse().map((item, index, all) => {
                 let running = 0
-                for (let i = 0; i <= index; i++) running += +all[i].change_amount || 0
+                for (let i = 0; i <= index; i++) if (all[i].record_in_balance !== false) running += +all[i].change_amount || 0
                 return (
                   <tr key={item.id}>
                     <td>{fa(item.created_at_jalali)}</td>
@@ -383,6 +383,7 @@ function ProductBalanceCharts({ history, unit }) {
   const negatives = []
 
   ;[...history].reverse().forEach((item) => {
+    if (item.record_in_balance === false) return
     if (!(item.change_amount > 0) && !(item.change_amount < 0)) return
     const point = { name: item.created_at_jalali, مقدار: Math.abs(item.change_amount) }
     ;(item.change_amount > 0 ? positives : negatives).push(point)
@@ -612,7 +613,7 @@ function History({ user, ok }) {
     e.preventDefault()
     if (busy) return
     setBusy(true)
-    api(`/api/history/${editing.id}`, { method: 'PUT', body: { amount: +editing.change_amount, note: editing.note, person_id: editing.person_id || null } })
+    api(`/api/history/${editing.id}`, { method: 'PUT', body: { amount: +editing.change_amount, note: editing.note, person_id: editing.person_id || null, record_in_balance: !!editing.record_in_balance } })
       .then(() => { setEditing(null); ok('رکورد ویرایش شد.'); load() })
       .catch((x) => setError(x.message))
       .finally(() => setBusy(false))
@@ -652,6 +653,9 @@ function History({ user, ok }) {
                       <td colSpan={canEdit || canDelete ? 6 : 5}>
                         <form className="form" onSubmit={saveEdit}>
                           <input required type="number" step="any" value={editing.change_amount} onChange={(e) => setEditing({ ...editing, change_amount: e.target.value })} />
+                          <label className="check">
+                            <input type="checkbox" checked={!!editing.record_in_balance} onChange={(e) => setEditing({ ...editing, record_in_balance: e.target.checked })} />ثبت در تراز
+                          </label>
                           <select value={editing.person_id || ''} onChange={(e) => setEditing({ ...editing, person_id: e.target.value })}>
                             <option value="">بدون شخص (تعدیل کلی)</option>
                             {persons.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
