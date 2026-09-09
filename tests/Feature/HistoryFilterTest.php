@@ -35,7 +35,7 @@ class HistoryFilterTest extends TestCase
     public function test_filters_by_user(): void
     {
         $this->actingAsSession($this->admin)
-            ->getJson("/api/history?user_id={$this->clerk->id}")
+            ->getJson("/api/history?user_id={$this->clerk->id}&all=1")
             ->assertOk()
             ->assertJsonCount(1)
             ->assertJsonPath('0.user.id', $this->clerk->id);
@@ -44,7 +44,7 @@ class HistoryFilterTest extends TestCase
     public function test_filters_by_product(): void
     {
         $this->actingAsSession($this->admin)
-            ->getJson("/api/history?product_id={$this->gold->id}")
+            ->getJson("/api/history?product_id={$this->gold->id}&all=1")
             ->assertOk()
             ->assertJsonCount(1)
             ->assertJsonPath('0.product.id', $this->gold->id);
@@ -53,14 +53,35 @@ class HistoryFilterTest extends TestCase
     public function test_filters_by_jalali_date_range(): void
     {
         $this->actingAsSession($this->admin)
-            ->getJson('/api/history?from=۱۴۰۵/۰۶/۰۱&to=۱۴۰۵/۰۶/۳۰')
+            ->getJson('/api/history?from=۱۴۰۵/۰۶/۰۱&to=۱۴۰۵/۰۶/۳۰&all=1')
             ->assertOk()
             ->assertJsonCount(2);
 
         $this->actingAsSession($this->admin)
-            ->getJson('/api/history?from=۱۴۰۵/۰۷/۰۱&to=۱۴۰۵/۰۷/۳۰')
+            ->getJson('/api/history?from=۱۴۰۵/۰۷/۰۱&to=۱۴۰۵/۰۷/۳۰&all=1')
             ->assertOk()
             ->assertJsonCount(0);
+    }
+
+    public function test_paginates_ten_records_per_page(): void
+    {
+        for ($i = 0; $i < 12; $i++) {
+            $this->actingAsSession($this->admin)->postJson("/api/products/{$this->gold->id}/balance", ['amount' => 1]);
+        }
+
+        $response = $this->actingAsSession($this->admin)
+            ->getJson('/api/history')
+            ->assertOk()
+            ->assertJsonCount(10, 'data')
+            ->assertJsonPath('current_page', 1)
+            ->assertJsonPath('last_page', 2)
+            ->assertJsonPath('total', 14);
+
+        $this->actingAsSession($this->admin)
+            ->getJson('/api/history?page=2')
+            ->assertOk()
+            ->assertJsonCount(4, 'data')
+            ->assertJsonPath('current_page', 2);
     }
 
     public function test_rejects_invalid_jalali_date(): void

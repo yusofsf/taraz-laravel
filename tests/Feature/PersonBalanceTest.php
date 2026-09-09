@@ -155,7 +155,7 @@ class PersonBalanceTest extends TestCase
         $this->actingAsSession($this->admin)
             ->getJson('/api/history')
             ->assertOk()
-            ->assertJsonStructure([['person' => ['name'], 'created_at_jalali']]);
+            ->assertJsonStructure(['data' => [['person' => ['name'], 'created_at_jalali']]]);
 
         $this->assertStringContainsString(
             '/',

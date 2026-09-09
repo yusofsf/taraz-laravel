@@ -576,6 +576,9 @@ function History({ user, ok }) {
   const [options, setOptions] = useState({ users: [], products: [] })
   const [persons, setPersons] = useState([])
   const [filters, setFilters] = useState({ from: '', to: '', user_id: '', product_id: '' })
+  const [page, setPage] = useState(1)
+  const [meta, setMeta] = useState({ current_page: 1, last_page: 1, total: 0 })
+  const [chartItems, setChartItems] = useState([])
   const [editing, setEditing] = useState(null)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
@@ -583,21 +586,54 @@ function History({ user, ok }) {
   const canEdit = user.is_admin || user.can_edit_history
   const canDelete = user.is_admin || user.can_delete_history
 
-  const load = () => {
-    if (busy) return Promise.resolve()
-    setBusy(true)
+  const filterQuery = () => {
     const query = new URLSearchParams()
     if (filters.from) query.set('from', filters.from)
     if (filters.to) query.set('to', filters.to)
     if (filters.user_id) query.set('user_id', filters.user_id)
     if (filters.product_id) query.set('product_id', filters.product_id)
+    return query
+  }
+
+  const load = (targetPage = page) => {
+    if (busy) return Promise.resolve()
+    setBusy(true)
+    const query = filterQuery()
+    query.set('page', targetPage)
     return api(`/api/history?${query.toString()}`)
-      .then((d) => { setItems(Array.isArray(d) ? d : []); setError('') })
-      .catch((x) => { setItems([]); setError(x.message) })
+      .then((d) => {
+        setItems(Array.isArray(d?.data) ? d.data : [])
+        setMeta({ current_page: d?.current_page || 1, last_page: d?.last_page || 1, total: d?.total || 0 })
+        setError('')
+      })
+      .catch((x) => { setItems([]); setChartItems([]); setError(x.message) })
       .finally(() => setBusy(false))
   }
+
+  const loadChart = () => {
+    const query = filterQuery()
+    query.set('all', '1')
+    return api(`/api/history?${query.toString()}`)
+      .then((d) => setChartItems(Array.isArray(d) ? d : []))
+      .catch(() => setChartItems([]))
+  }
+
+  const applyFilters = (e) => {
+    e.preventDefault()
+    setPage(1)
+    load(1)
+    loadChart()
+  }
+
+  const goPage = (targetPage) => {
+    if (targetPage < 1 || targetPage > meta.last_page || targetPage === meta.current_page || busy) return
+    setPage(targetPage)
+    load(targetPage)
+  }
+
   useEffect(() => {
     load()
+    loadChart()
     api('/api/history/options').then(setOptions).catch(() => {})
     if (canEdit) api('/api/persons').then(setPersons).catch(() => setPersons([]))
   }, [])
@@ -605,7 +641,7 @@ function History({ user, ok }) {
   const remove = (item) => {
     if (!window.confirm('این رکورد از تاریخچه حذف شود؟ تراز کالا و شخص به حالت قبل برمی‌گردد.')) return
     api(`/api/history/${item.id}`, { method: 'DELETE' })
-      .then(() => { ok('رکورد حذف شد.'); load() })
+      .then(() => { ok('رکورد حذف شد.'); load(); loadChart() })
       .catch((x) => setError(x.message))
   }
 
@@ -614,7 +650,7 @@ function History({ user, ok }) {
     if (busy) return
     setBusy(true)
     api(`/api/history/${editing.id}`, { method: 'PUT', body: { amount: +editing.change_amount, note: editing.note, person_id: editing.person_id || null, record_in_balance: !!editing.record_in_balance } })
-      .then(() => { setEditing(null); ok('رکورد ویرایش شد.'); load() })
+      .then(() => { setEditing(null); ok('رکورد ویرایش شد.'); load(); loadChart() })
       .catch((x) => setError(x.message))
       .finally(() => setBusy(false))
   }
@@ -624,7 +660,7 @@ function History({ user, ok }) {
       <Msg x={error} />
       <div className="panel">
         <div className="panel-title"><span>فیلتر گزارش</span><small>تاریخ‌ها را به شمسی وارد کنید (نمونه: ۱۴۰۵/۰۶/۰۱)</small></div>
-        <form className="form" onSubmit={(e) => { e.preventDefault(); load() }}>
+        <form className="form" onSubmit={applyFilters}>
           <select value={filters.user_id} onChange={(e) => setFilters({ ...filters, user_id: e.target.value })}>
             <option value="">همه کاربران</option>
             {options.users.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
@@ -638,11 +674,11 @@ function History({ user, ok }) {
           <button disabled={busy}>اعمال فیلتر</button>
         </form>
       </div>
-      {items.length
-        ? <BalanceLineChart items={items} />
+      {chartItems.length
+        ? <BalanceLineChart items={chartItems} />
         : <div className="panel"><div className="empty">با این فیلترها تغییری یافت نشد.</div></div>}
       <div className="panel">
-        <div className="panel-title"><span>ریز تغییرات</span><small>{fa(items.length)} مورد</small></div>
+        <div className="panel-title"><span>ریز تغییرات</span><small>{fa(meta.total)} مورد</small></div>
         <table>
           <thead><tr><th>تاریخ</th><th>کالا</th><th>شخص</th><th>کاربر</th><th>تغییر</th>{(canEdit || canDelete) && <th>عملیات</th>}</tr></thead>
           <tbody>
@@ -686,6 +722,15 @@ function History({ user, ok }) {
             {!items.length && <tr><td colSpan={canEdit || canDelete ? 6 : 5} className="empty-row">داده‌ای برای این فیلترها وجود ندارد.</td></tr>}
           </tbody>
         </table>
+        {meta.last_page > 1 && (
+          <div className="pagination">
+            <button type="button" className="ghost" disabled={busy || meta.current_page <= 1} onClick={() => goPage(meta.current_page - 1)}>قبلی</button>
+            {Array.from({ length: meta.last_page }, (_, i) => i + 1).map((p) => (
+              <button key={p} type="button" className={p === meta.current_page ? '' : 'ghost'} disabled={busy} onClick={() => goPage(p)}>{fa(p)}</button>
+            ))}
+            <button type="button" className="ghost" disabled={busy || meta.current_page >= meta.last_page} onClick={() => goPage(meta.current_page + 1)}>بعدی</button>
+          </div>
+        )}
       </div>
     </>
   )

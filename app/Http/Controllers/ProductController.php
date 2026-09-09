@@ -354,7 +354,11 @@ class ProductController extends Controller
             $query->where('product_id', (int) $request->input('product_id'));
         }
 
-        return response()->json($query->get());
+        if ($request->boolean('all')) {
+            return response()->json($query->get());
+        }
+
+        return response()->json($query->paginate(10));
     }
 
     /**
