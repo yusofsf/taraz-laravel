@@ -13,7 +13,7 @@ class UserController extends Controller
     public function index(): JsonResponse
     {
         return response()->json(
-            User::select('id', 'name', 'mobile', 'is_admin', 'can_add_users', 'can_add_products', 'can_edit_products', 'can_change_balance', 'can_edit_history', 'can_delete_history', 'can_edit_persons', 'can_delete_persons', 'can_manage_permissions')
+            User::select('id', 'name', 'mobile', 'is_admin', 'can_add_users', 'can_add_products', 'can_edit_products', 'can_delete_products', 'can_change_balance', 'can_edit_history', 'can_delete_history', 'can_edit_persons', 'can_delete_persons', 'can_manage_permissions')
                 ->latest()
                 ->get()
         );
@@ -27,6 +27,7 @@ class UserController extends Controller
             'can_add_users' => 'boolean',
             'can_add_products' => 'boolean',
             'can_edit_products' => 'boolean',
+            'can_delete_products' => 'boolean',
             'can_change_balance' => 'boolean',
             'can_edit_history' => 'boolean',
             'can_delete_history' => 'boolean',
@@ -71,6 +72,7 @@ class UserController extends Controller
             'can_add_users' => 'boolean',
             'can_add_products' => 'boolean',
             'can_edit_products' => 'boolean',
+            'can_delete_products' => 'boolean',
             'can_change_balance' => 'boolean',
             'can_edit_history' => 'boolean',
             'can_delete_history' => 'boolean',

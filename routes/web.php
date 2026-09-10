@@ -23,7 +23,7 @@ Route::middleware('web.auth')->group(function () {
     Route::post('/api/products', [ProductController::class, 'store'])->middleware('permission:can_add_products');
     Route::put('/api/products/{product}', [ProductController::class, 'update'])->middleware('permission:can_edit_products');
     Route::post('/api/products/{product}/balance', [ProductController::class, 'changeBalance'])->middleware('permission:can_change_balance');
-    Route::delete('/api/products/{product}', [ProductController::class, 'destroy'])->middleware('permission:can_add_products');
+    Route::delete('/api/products/{product}', [ProductController::class, 'destroyProduct'])->middleware('permission:can_delete_products');
     Route::get('/api/history', [ProductController::class, 'history']);
     Route::get('/api/invoices/today', [ProductController::class, 'todayInvoices']);
     Route::get('/api/history/options', [ProductController::class, 'historyOptions']);

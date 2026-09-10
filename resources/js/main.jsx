@@ -7,6 +7,7 @@ const PERMISSIONS = [
   ['can_add_users', 'افزودن کاربر'],
   ['can_add_products', 'افزودن کالا'],
   ['can_edit_products', 'ویرایش کالاها'],
+  ['can_delete_products', 'حذف کالاها'],
   ['can_change_balance', 'تغییر تراز'],
   ['can_edit_history', 'ویرایش تاریخچه تراز'],
   ['can_delete_history', 'حذف تاریخچه تراز'],
@@ -66,7 +67,7 @@ const fmt = (x) => fa(+(+x).toFixed(3))
 const EMPTY_PRODUCT = { name: '', sku: '', quantity: 0, unit: 'عدد' }
 const EMPTY_CHANGE = { product_id: '', direction: 'خرید', record_in_balance: true, quantity: '', unit_price: '', settlement_method: 'کاغذ', settlement_medium: 'ریال', settlement_date: '', person_id: '', from_person_id: '', to_person_id: '', note: '' }
 const EMPTY_PERSON = { name: '', mobile: '', note: '' }
-const EMPTY_USER = { name: '', mobile: '', can_add_users: false, can_add_products: false, can_edit_products: false, can_change_balance: false, can_edit_history: false, can_delete_history: false, can_edit_persons: false, can_delete_persons: false, can_manage_permissions: false }
+const EMPTY_USER = { name: '', mobile: '', can_add_users: false, can_add_products: false, can_edit_products: false, can_delete_products: false, can_change_balance: false, can_edit_history: false, can_delete_history: false, can_edit_persons: false, can_delete_persons: false, can_manage_permissions: false }
 
 function BalanceLineChart({ items, granularity = 'day' }) {
   const data = useMemo(() => [...items].filter((item) => item.record_in_balance !== false).reverse().map((item) => {
@@ -261,17 +262,118 @@ function Dashboard({ user }) {
   )
 }
 
+// کمبو باکس اشخاص: با تایپ، جست‌وجوی زنده روی نام/موبایل انجام و با کلیک یا Enter انتخاب می‌شود
+function PersonPicker({ value, onChange, placeholder }) {
+  const [query, setQuery] = useState('')
+  const [results, setResults] = useState(null)
+  const [selected, setSelected] = useState(null)
+  const [open, setOpen] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [highlight, setHighlight] = useState(0)
+  const rootRef = useRef(null)
+  const inputRef = useRef(null)
+  const timer = useRef(null)
+  const seq = useRef(0)
+
+  // پاسخ درخواست‌های تازه‌تر نباید جای درخواست کهنه را بگیرد
+  const search = (q, immediate = false) => {
+    clearTimeout(timer.current)
+    const run = () => {
+      const id = ++seq.current
+      setBusy(true)
+      api(`/api/persons${q ? `?q=${encodeURIComponent(q)}` : ''}`)
+        .then((list) => { if (id === seq.current) { setResults(list); setHighlight(0) } })
+        .catch(() => { if (id === seq.current) setResults([]) })
+        .finally(() => { if (id === seq.current) setBusy(false) })
+    }
+    if (immediate) run()
+    else timer.current = setTimeout(run, 250)
+  }
+
+  const openMenu = () => {
+    setOpen(true)
+    setQuery('')
+    search('', true)
+    setTimeout(() => inputRef.current?.focus(), 0)
+  }
+
+  const pick = (person) => {
+    setSelected(person)
+    onChange(String(person.id))
+    setOpen(false)
+  }
+
+  const clear = (e) => {
+    e.stopPropagation()
+    setSelected(null)
+    onChange('')
+    setOpen(false)
+  }
+
+  const onKey = (e) => {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      setHighlight((h) => Math.min(h + 1, (results?.length || 1) - 1))
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      setHighlight((h) => Math.max(h - 1, 0))
+    } else if (e.key === 'Enter') {
+      e.preventDefault()
+      if (results?.length) pick(results[highlight])
+    } else if (e.key === 'Escape') {
+      setOpen(false)
+    }
+  }
+
+  useEffect(() => { if (!value) setSelected(null) }, [value])
+
+  useEffect(() => {
+    if (!open) return undefined
+    const close = (e) => { if (!rootRef.current?.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', close)
+    return () => document.removeEventListener('mousedown', close)
+  }, [open])
+
+  return (
+    <div className="person-picker" ref={rootRef}>
+      {open
+        ? (
+            <input ref={inputRef} value={query} placeholder="جست‌وجوی نام یا موبایل…"
+              onChange={(e) => { setQuery(e.target.value); search(e.target.value) }}
+              onKeyDown={onKey} />
+          )
+        : (
+            <button type="button" className={`picker-toggle ${selected ? '' : 'placeholder'}`} onClick={openMenu}>
+              <span>{selected ? selected.name : placeholder}</span>
+              {selected && <small className="picker-clear" onClick={clear}>✕</small>}
+            </button>
+          )}
+      {open && (
+        <div className="picker-menu">
+          {busy && <small className="picker-hint">در حال جست‌وجو…</small>}
+          {!busy && results?.length
+            ? results.map((p, i) => (
+              <button type="button" key={p.id} className={i === highlight ? 'on' : ''} onClick={() => pick(p)} onMouseEnter={() => setHighlight(i)}>
+                <span>{p.name}</span>
+                <small>{displayMobile(p.mobile)}</small>
+              </button>
+            ))
+            : !busy && <small className="picker-hint">شخصی یافت نشد.</small>}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function Products({ user, ok }) {
   const [products, setProducts] = useState([])
   const [form, setForm] = useState(EMPTY_PRODUCT)
   const [change, setChange] = useState(EMPTY_CHANGE)
-  const [persons, setPersons] = useState([])
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
 
   const load = () => api('/api/products').then(setProducts)
-  const loadPersons = () => api('/api/persons').then(setPersons).catch(() => setPersons([]))
-  useEffect(() => { load(); loadPersons() }, [])
+  useEffect(() => { load() }, [])
 
   const canAdd = user.is_admin || user.can_add_products
   const canChange = user.is_admin || user.can_change_balance
@@ -328,20 +430,11 @@ function Products({ user, ok }) {
                   <option value="ریال">حواله ریالی</option>
                   <option value="کاغذ">حواله کاغذی</option>
                 </select>
-                <select required value={change.from_person_id} onChange={(x) => setChange({ ...change, from_person_id: x.target.value })}>
-                  <option value="">حواله از شخص</option>
-                  {persons.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                </select>
-                <select required value={change.to_person_id} onChange={(x) => setChange({ ...change, to_person_id: x.target.value })}>
-                  <option value="">حواله به شخص</option>
-                  {persons.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                </select>
+                <PersonPicker required value={change.from_person_id} onChange={(id) => setChange({ ...change, from_person_id: id })} placeholder="حواله از شخص" />
+                <PersonPicker required value={change.to_person_id} onChange={(id) => setChange({ ...change, to_person_id: id })} placeholder="حواله به شخص" />
               </>
             )}
-            <select value={change.person_id} onChange={(x) => setChange({ ...change, person_id: x.target.value })}>
-              <option value="">طرف معامله (اختیاری)</option>
-              {persons.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-            </select>
+            <PersonPicker value={change.person_id} onChange={(id) => setChange({ ...change, person_id: id })} placeholder="طرف معامله (اختیاری)" />
             <input required placeholder="تاریخ تسویه شمسی ۱۴۰۵/۰۶/۰۱" value={change.settlement_date} onChange={(x) => setChange({ ...change, settlement_date: x.target.value })} />
             <input placeholder="یادداشت" value={change.note} onChange={(x) => setChange({ ...change, note: x.target.value })} />
             <button disabled={busy}>ثبت {change.direction}</button>
@@ -506,7 +599,7 @@ function TodayInvoices() {
   )
 }
 
-function EditProducts({ ok }) {
+function EditProducts({ user, ok }) {
   const [products, setProducts] = useState([])
   const [editing, setEditing] = useState(null)
   const [error, setError] = useState('')
@@ -514,6 +607,15 @@ function EditProducts({ ok }) {
 
   const load = () => api('/api/products').then(setProducts)
   useEffect(() => { load() }, [])
+
+  const canDelete = user.is_admin || user.can_delete_products
+
+  const remove = (item) => {
+    if (!window.confirm(`«${item.name}» حذف شود؟`)) return
+    api(`/api/products/${item.id}`, { method: 'DELETE' })
+      .then(() => { load(); ok('کالا حذف شد.') })
+      .catch((x) => setError(x.message))
+  }
 
   const save = (e) => {
     e.preventDefault()
@@ -531,7 +633,7 @@ function EditProducts({ ok }) {
       <div className="panel">
         <div className="panel-title">
           <span>ویرایش کالاها</span>
-          <small>برای ویرایش، روی «ویرایش» کنار هر کالا بزنید</small>
+          <small>برای ویرایش، روی «ویرایش» کنار هر کالا بزنید{canDelete && '؛ کالای بدون تاریخچه قابل حذف است'}</small>
         </div>
         <table>
           <thead><tr><th>نام</th><th>کد</th><th>تراز اولیه</th><th>واحد</th><th></th></tr></thead>
@@ -560,7 +662,10 @@ function EditProducts({ ok }) {
                       <td>{item.sku || '—'}</td>
                       <td>{fmt(item.quantity)}</td>
                       <td>{item.unit || 'عدد'}</td>
-                      <td><button type="button" onClick={() => setEditing({ ...item })}>ویرایش</button></td>
+                      <td>
+                        <button type="button" onClick={() => setEditing({ ...item })}>ویرایش</button>
+                        {canDelete && <button type="button" className="ghost" onClick={() => remove(item)}>حذف</button>}
+                      </td>
                     </tr>
                   )
             ))}

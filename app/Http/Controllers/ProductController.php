@@ -182,6 +182,28 @@ class ProductController extends Controller
     }
 
     /**
+     * Deletes a product that has no balance history. کاغذ/ریال are system
+     * money products and can never be removed.
+     */
+    public function destroyProduct(Product $product): JsonResponse
+    {
+        if (in_array($product->name, self::MONEY_PRODUCTS, true)) {
+            return response()->json(['message' => 'کاغذ و ریال کالاهای پیش‌فرض سامانه‌اند و حذف نمی‌شوند.'], 409);
+        }
+
+        if ($product->balanceChanges()->exists()) {
+            return response()->json(['message' => 'این کالا در تاریخچه تراز ثبت شده است؛ ابتدا رکوردهای آن را حذف کنید.'], 409);
+        }
+
+        DB::transaction(function () use ($product) {
+            PersonProduct::where('product_id', $product->id)->delete();
+            $product->delete();
+        });
+
+        return response()->json(['message' => 'حذف شد.']);
+    }
+
+    /**
      * Old plain adjustment flow kept for compatibility (no price/settlement).
      */
     private function adjustBalance(Request $request, Product $product): JsonResponse
