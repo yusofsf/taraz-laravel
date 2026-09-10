@@ -101,6 +101,76 @@ class PersonManagementTest extends TestCase
         $this->assertDatabaseHas('persons', ['id' => $person->id]);
     }
 
+    public function test_cannot_delete_person_who_is_only_a_havale_party(): void
+    {
+        $person = Person::create(['name' => 'علی']);
+        $counterparty = Person::create(['name' => 'رضا']);
+        $product = Product::create(['name' => 'طلا', 'quantity' => 0, 'unit' => 'گرم']);
+        BalanceChange::create([
+            'product_id' => $product->id,
+            'user_id' => $this->admin->id,
+            'type' => 'trade',
+            'from_person_id' => $person->id,
+            'to_person_id' => $counterparty->id,
+            'change_amount' => 2,
+            'total_price' => 1000,
+            'previous_quantity' => 0,
+            'new_quantity' => 2,
+        ]);
+
+        // شخص در هیچ رکوردی به‌عنوان person_id نیست، اما طرفِ حواله است و حذف نمی‌شود
+        $this->actingAsSession($this->deleter)
+            ->deleteJson("/api/persons/{$person->id}")
+            ->assertStatus(409);
+
+        $this->assertDatabaseHas('persons', ['id' => $person->id]);
+    }
+
+    public function test_update_edits_per_product_balances(): void
+    {
+        $person = Person::create(['name' => 'علی']);
+        $gold = Product::create(['name' => 'طلا', 'quantity' => 0, 'unit' => 'گرم']);
+        $paper = Product::create(['name' => 'کاغذ', 'quantity' => 0, 'unit' => 'عدد']);
+        PersonProduct::create(['person_id' => $person->id, 'product_id' => $gold->id, 'quantity' => 5]);
+
+        $this->actingAsSession($this->editor)
+            ->putJson("/api/persons/{$person->id}", [
+                'name' => 'علی',
+                'products' => [
+                    ['id' => $gold->id, 'quantity' => 3.5],
+                    ['id' => $paper->id, 'quantity' => -1200],
+                ],
+            ])
+            ->assertStatus(200);
+
+        $this->assertDatabaseHas('person_product', ['person_id' => $person->id, 'product_id' => $gold->id, 'quantity' => 3.5]);
+        $this->assertDatabaseHas('person_product', ['person_id' => $person->id, 'product_id' => $paper->id, 'quantity' => -1200]);
+    }
+
+    public function test_update_rejects_invalid_product_quantity(): void
+    {
+        $person = Person::create(['name' => 'علی']);
+        $gold = Product::create(['name' => 'طلا', 'quantity' => 0, 'unit' => 'گرم']);
+
+        $this->actingAsSession($this->editor)
+            ->putJson("/api/persons/{$person->id}", [
+                'name' => 'علی',
+                'products' => [
+                    ['id' => $gold->id, 'quantity' => 'زیاد'],
+                ],
+            ])
+            ->assertStatus(422);
+
+        $this->actingAsSession($this->editor)
+            ->putJson("/api/persons/{$person->id}", [
+                'name' => 'علی',
+                'products' => [
+                    ['id' => 999999, 'quantity' => 1],
+                ],
+            ])
+            ->assertStatus(422);
+    }
+
     public function test_search_filters_by_name_or_mobile(): void
     {
         Person::create(['name' => 'علی رضایی', 'mobile' => '09121110000']);

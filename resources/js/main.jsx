@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { Area, AreaChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { JalaliDatepicker, formatJalaliDate, parseJalaliDate } from 'flexible-multi-calendar-datepicker'
 import './style.css'
 
 const PERMISSIONS = [
@@ -14,6 +15,7 @@ const PERMISSIONS = [
   ['can_edit_persons', 'افزودن و ویرایش اشخاص'],
   ['can_delete_persons', 'حذف اشخاص'],
   ['can_manage_permissions', 'مدیریت دسترسی‌ها'],
+  ['can_view_logs', 'مشاهده لاگ سامانه'],
 ]
 
 const UNITS = ['عدد', 'گرم', 'مثقال', 'انس']
@@ -65,17 +67,56 @@ const fa = (x) => String(x ?? '').replace(/[0-9.]/g, (c) => (c === '.' ? '٫' : 
 const fmt = (x) => fa(+(+x).toFixed(3))
 
 const EMPTY_PRODUCT = { name: '', sku: '', quantity: 0, unit: 'عدد' }
-const EMPTY_CHANGE = { product_id: '', direction: 'خرید', record_in_balance: true, quantity: '', unit_price: '', settlement_method: 'کاغذ', settlement_medium: 'ریال', settlement_date: '', person_id: '', from_person_id: '', to_person_id: '', note: '' }
+const EMPTY_CHANGE = { product_id: '', direction: 'خرید', record_in_balance: true, quantity: '', unit_price: '', settlement_method: 'کاغذ', settlement_medium: 'ریال', trade_date: '', settlement_date: '', person_id: '', from_person_id: '', to_person_id: '', note: '' }
 const EMPTY_PERSON = { name: '', mobile: '', note: '' }
-const EMPTY_USER = { name: '', mobile: '', can_add_users: false, can_add_products: false, can_edit_products: false, can_delete_products: false, can_change_balance: false, can_edit_history: false, can_delete_history: false, can_edit_persons: false, can_delete_persons: false, can_manage_permissions: false }
+const EMPTY_USER = { name: '', mobile: '', can_add_users: false, can_add_products: false, can_edit_products: false, can_delete_products: false, can_change_balance: false, can_edit_history: false, can_delete_history: false, can_edit_persons: false, can_delete_persons: false, can_manage_permissions: false, can_view_logs: false }
+
+// ورودی تاریخ شمسی با تقویم بازشو؛ متن قابل تایپ است و با تاریخ‌خرید هم‌گام می‌ماند
+function JalaliInput({ value, onChange, placeholder, required = false }) {
+  const inputRef = useRef(null)
+  const [open, setOpen] = useState(false)
+
+  const commit = (date) => {
+    onChange(date ? formatJalaliDate(date, 'YYYY/MM/DD', 'fa') : '')
+  }
+
+  return (
+    <>
+      <input
+        ref={inputRef}
+        required={required}
+        inputMode="numeric"
+        dir="ltr"
+        placeholder={placeholder || '۱۴۰۵/۰۶/۰۱'}
+        value={value}
+        onFocus={() => setOpen(true)}
+        onChange={(e) => {
+          onChange(e.target.value)
+          parseJalaliDate(e.target.value, 'YYYY/MM/DD', 'fa')
+        }}
+      />
+      <JalaliDatepicker
+        open={open}
+        anchorRef={inputRef}
+        value={parseJalaliDate(value, 'YYYY/MM/DD', 'fa')}
+        label={placeholder}
+        onConfirm={commit}
+        onClose={() => setOpen(false)}
+      />
+    </>
+  )
+}
+
+// تاریخ مؤثر رکورد در نمایش‌ها: تاریخ معامله اگر ثبت شده باشد، وگرنه تاریخ ایجاد
+const effectiveJalali = (item) => item.trade_date_jalali || item.created_at_jalali?.slice(0, 10) || ''
 
 function BalanceLineChart({ items, granularity = 'day' }) {
   const data = useMemo(() => [...items].filter((item) => item.record_in_balance !== false).reverse().map((item) => {
     const date = item.created_at ? new Date(item.created_at) : null
-    let name = item.created_at_jalali?.slice(0, 10) || ''
+    let name = effectiveJalali(item)
     if (date && granularity === 'hour') name += ` ${String(date.getHours()).padStart(2, '0')}:00`
     if (date && granularity === 'minute') name += ` ${item.created_at_jalali?.slice(-5) || ''}`
-    if (granularity === 'day') name += ` ${item.created_at_jalali?.slice(-5) || ''}`
+    if (date && granularity === 'day' && !item.trade_date_jalali) name += ` ${item.created_at_jalali?.slice(-5) || ''}`
     return { name, change: item.change_amount }
   }), [items, granularity])
 
@@ -112,6 +153,7 @@ function App() {
     'تاریخچه',
     'اشخاص',
     ...(can('can_add_users') ? ['کاربران'] : []),
+    ...(can('can_view_logs') ? ['لاگ سامانه'] : []),
     'مشخصات']
 
   return (
@@ -136,6 +178,7 @@ function App() {
         {page === 'تاریخچه' && <History user={user} ok={setMsg} />}
         {page === 'اشخاص' && <Persons user={user} ok={setMsg} />}
         {page === 'کاربران' && <Users user={user} ok={setMsg} />}
+        {page === 'لاگ سامانه' && <ActivityLogs />}
         {page === 'مشخصات' && <Profile user={user} reload={load} ok={setMsg} />}
       </section>
     </main>
@@ -230,8 +273,8 @@ function Dashboard({ user }) {
         <div className="panel">
           <h3>جزئیات {selected.name}</h3>
           <form className="form range-form" onSubmit={applyRange}>
-            <input placeholder="از تاریخ ۱۴۰۵/۰۱/۰۱" value={range.from} onChange={(q) => setRange({ ...range, from: q.target.value })} />
-            <input placeholder="تا تاریخ ۱۴۰۵/۰۶/۳۱" value={range.to} onChange={(q) => setRange({ ...range, to: q.target.value })} />
+            <JalaliInput value={range.from} onChange={(v) => setRange({ ...range, from: v })} placeholder="از تاریخ" />
+            <JalaliInput value={range.to} onChange={(v) => setRange({ ...range, to: v })} placeholder="تا تاریخ" />
             <button>نمایش بازه</button>
           </form>
           <small className="hint">
@@ -246,7 +289,7 @@ function Dashboard({ user }) {
                 for (let i = 0; i <= index; i++) if (all[i].record_in_balance !== false) running += +all[i].change_amount || 0
                 return (
                   <tr key={item.id}>
-                    <td>{fa(item.created_at_jalali)}</td>
+                    <td>{fa(effectiveJalali(item))}</td>
                     <td>{item.person?.name || '—'}</td>
                     <td>{item.user?.name}</td>
                     <td>{fmt(item.change_amount)}</td>
@@ -430,12 +473,13 @@ function Products({ user, ok }) {
                   <option value="ریال">حواله ریالی</option>
                   <option value="کاغذ">حواله کاغذی</option>
                 </select>
-                <PersonPicker required value={change.from_person_id} onChange={(id) => setChange({ ...change, from_person_id: id })} placeholder="حواله از شخص" />
-                <PersonPicker required value={change.to_person_id} onChange={(id) => setChange({ ...change, to_person_id: id })} placeholder="حواله به شخص" />
+                <PersonPicker value={change.from_person_id} onChange={(id) => setChange({ ...change, from_person_id: id })} placeholder="حواله از شخص" />
+                <PersonPicker value={change.to_person_id} onChange={(id) => setChange({ ...change, to_person_id: id })} placeholder="حواله به شخص" />
               </>
             )}
             <PersonPicker value={change.person_id} onChange={(id) => setChange({ ...change, person_id: id })} placeholder="طرف معامله (اختیاری)" />
-            <input required placeholder="تاریخ تسویه شمسی ۱۴۰۵/۰۶/۰۱" value={change.settlement_date} onChange={(x) => setChange({ ...change, settlement_date: x.target.value })} />
+            <JalaliInput required value={change.trade_date} onChange={(v) => setChange({ ...change, trade_date: v })} placeholder="تاریخ معامله" />
+            <JalaliInput required value={change.settlement_date} onChange={(v) => setChange({ ...change, settlement_date: v })} placeholder="تاریخ تسویه" />
             <input placeholder="یادداشت" value={change.note} onChange={(x) => setChange({ ...change, note: x.target.value })} />
             <button disabled={busy}>ثبت {change.direction}</button>
           </form>
@@ -478,7 +522,7 @@ function ProductBalanceCharts({ history, unit }) {
   ;[...history].reverse().forEach((item) => {
     if (item.record_in_balance === false) return
     if (!(item.change_amount > 0) && !(item.change_amount < 0)) return
-    const point = { name: item.created_at_jalali, مقدار: Math.abs(item.change_amount) }
+    const point = { name: effectiveJalali(item), مقدار: Math.abs(item.change_amount) }
     ;(item.change_amount > 0 ? positives : negatives).push(point)
   })
 
@@ -568,14 +612,14 @@ function TodayInvoices() {
               <table>
                 <thead>
                   <tr>
-                    <th>ساعت</th><th>کالا</th><th>نوع</th><th>مقدار</th><th>قیمت واحد</th>
+                    <th>تاریخ معامله</th><th>کالا</th><th>نوع</th><th>مقدار</th><th>قیمت واحد</th>
                     <th>مبلغ کل</th><th>تسویه</th><th>تاریخ تسویه</th><th>اشخاص</th>
                   </tr>
                 </thead>
                 <tbody>
                   {data.invoices.map((item) => (
                     <tr key={item.id}>
-                      <td>{fa(item.created_at_jalali?.slice(-5) || '—')}</td>
+                      <td>{fa(effectiveJalali(item))}</td>
                       <td>{item.product?.name || '—'}</td>
                       <td className={item.direction === 'خرید' ? 'up' : 'down'}>{item.direction || 'تعدیل'}</td>
                       <td>{fmt(item.change_amount)} {item.product?.unit || ''}</td>
@@ -774,8 +818,8 @@ function History({ user, ok }) {
             <option value="">همه کالاها</option>
             {options.products.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
-          <input placeholder="از تاریخ ۱۴۰۵/۰۱/۰۱" value={filters.from} onChange={(e) => setFilters({ ...filters, from: e.target.value })} />
-          <input placeholder="تا تاریخ ۱۴۰۵/۰۶/۳۰" value={filters.to} onChange={(e) => setFilters({ ...filters, to: e.target.value })} />
+          <JalaliInput value={filters.from} onChange={(v) => setFilters({ ...filters, from: v })} placeholder="از تاریخ" />
+          <JalaliInput value={filters.to} onChange={(v) => setFilters({ ...filters, to: v })} placeholder="تا تاریخ" />
           <button disabled={busy}>اعمال فیلتر</button>
         </form>
       </div>
@@ -810,7 +854,7 @@ function History({ user, ok }) {
                   )
                 : (
                     <tr key={item.id}>
-                      <td>{fa(item.created_at_jalali)}</td>
+                      <td>{fa(effectiveJalali(item))}</td>
                       <td>{item.product?.name || '—'}</td>
                       <td>{item.person?.name || '—'}</td>
                       <td>{item.user?.name || '—'}</td>
@@ -865,7 +909,13 @@ function Persons({ user, ok }) {
   useEffect(() => { load() }, [])
 
   const startEdit = (person) => {
-    setEditing({ id: person.id, name: person.name, mobile: person.mobile || '', note: person.note || '' })
+    setEditing({
+      id: person.id,
+      name: person.name,
+      mobile: person.mobile || '',
+      note: person.note || '',
+      products: (person.products || []).map((product) => ({ ...product })),
+    })
     setTimeout(() => editFormRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' }), 0)
   }
 
@@ -888,10 +938,22 @@ function Persons({ user, ok }) {
     e.preventDefault()
     if (busy) return
     setBusy(true)
-    api(`/api/persons/${editing.id}`, { method: 'PUT', body: { name: editing.name, mobile: editing.mobile, note: editing.note } })
+    api(`/api/persons/${editing.id}`, {
+      method: 'PUT',
+      body: {
+        name: editing.name,
+        mobile: editing.mobile,
+        note: editing.note,
+        products: (editing.products || []).map((product) => ({ id: product.id, quantity: product.quantity })),
+      },
+    })
       .then(() => { setEditing(null); load(); ok('اطلاعات شخص ذخیره شد.') })
       .catch((x) => setError(x.message))
       .finally(() => setBusy(false))
+  }
+
+  const setProductQuantity = (productId, quantity) => {
+    setEditing({ ...editing, products: editing.products.map((product) => (product.id === productId ? { ...product, quantity } : product)) })
   }
 
   const remove = (person) => {
@@ -922,6 +984,25 @@ function Persons({ user, ok }) {
             <button disabled={busy}>{editing ? 'ذخیره' : 'افزودن'}</button>
             {editing && <button type="button" className="ghost" onClick={() => setEditing(null)}>انصراف</button>}
           </form>
+          {editing?.products?.length > 0 && (
+            <div className="person-products">
+              <small className="hint">بدهکاری/بستانکاری هر کالا؛ مقدار مثبت یعنی بدهکار، منفی یعنی طلبکار و صفر یعنی تسویه.</small>
+              <div className="person-products-grid">
+                {editing.products.map((product) => (
+                  <label className="person-product-row" key={product.id}>
+                    <span>{product.name} <em>({product.unit || 'عدد'})</em></span>
+                    <input
+                      type="number"
+                      step="any"
+                      dir="ltr"
+                      value={product.quantity}
+                      onChange={(e) => setProductQuantity(product.id, e.target.value === '' ? '' : +e.target.value)}
+                    />
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
       <div className="panel">
@@ -1077,6 +1158,130 @@ function Users({ user, ok }) {
             ))}
           </tbody>
         </table>
+      </div>
+    </>
+  )
+}
+
+const LOG_ACTION_LABELS = {
+  login: 'ورود', login_failed: 'ورود ناموفق', logout: 'خروج',
+  product_create: 'افزودن کالا', product_update: 'ویرایش کالا', product_delete: 'حذف کالا',
+  trade: 'معامله', adjust: 'تعدیل تراز', history_update: 'ویرایش تاریخچه', history_delete: 'حذف تاریخچه',
+  person_create: 'افزودن شخص', person_update: 'ویرایش شخص', person_delete: 'حذف شخص',
+  user_create: 'افزودن کاربر', user_update: 'ویرایش کاربر', user_delete: 'حذف کاربر',
+  permission_update: 'تغییر دسترسی', profile_update: 'ویرایش مشخصات',
+}
+
+function ActivityLogs() {
+  const [items, setItems] = useState([])
+  const [options, setOptions] = useState({ users: [], actions: [], target_types: [] })
+  const [filters, setFilters] = useState({ from: '', to: '', user_id: '', action: '' })
+  const [page, setPage] = useState(1)
+  const [meta, setMeta] = useState({ current_page: 1, last_page: 1, total: 0 })
+  const [expanded, setExpanded] = useState(null)
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const filterQuery = () => {
+    const query = new URLSearchParams()
+    if (filters.from) query.set('from', filters.from)
+    if (filters.to) query.set('to', filters.to)
+    if (filters.user_id) query.set('user_id', filters.user_id)
+    if (filters.action) query.set('action', filters.action)
+    return query
+  }
+
+  const load = (targetPage = page) => {
+    if (busy) return Promise.resolve()
+    setBusy(true)
+    const query = filterQuery()
+    query.set('page', targetPage)
+    return api(`/api/logs?${query.toString()}`)
+      .then((d) => {
+        setItems(Array.isArray(d?.data) ? d.data : [])
+        setMeta({ current_page: d?.current_page || 1, last_page: d?.last_page || 1, total: d?.total || 0 })
+        setError('')
+      })
+      .catch((x) => { setItems([]); setError(x.message) })
+      .finally(() => setBusy(false))
+  }
+
+  const applyFilters = (e) => {
+    e.preventDefault()
+    setPage(1)
+    load(1)
+  }
+
+  const goPage = (targetPage) => {
+    if (targetPage < 1 || targetPage > meta.last_page || targetPage === meta.current_page || busy) return
+    setPage(targetPage)
+    load(targetPage)
+  }
+
+  useEffect(() => {
+    load()
+    api('/api/logs/options').then(setOptions).catch(() => {})
+  }, [])
+
+  return (
+    <>
+      <Msg x={error} />
+      <div className="panel">
+        <div className="panel-title"><span>فیلتر لاگ</span><small>تاریخ‌ها را به شمسی وارد کنید (نمونه: ۱۴۰۵/۰۶/۰۱)</small></div>
+        <form className="form" onSubmit={applyFilters}>
+          <select value={filters.user_id} onChange={(e) => setFilters({ ...filters, user_id: e.target.value })}>
+            <option value="">همه کاربران</option>
+            {options.users.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+          </select>
+          <select value={filters.action} onChange={(e) => setFilters({ ...filters, action: e.target.value })}>
+            <option value="">همه عملیات</option>
+            {(options.actions || []).map((a) => <option key={a} value={a}>{LOG_ACTION_LABELS[a] || a}</option>)}
+          </select>
+          <JalaliInput value={filters.from} onChange={(v) => setFilters({ ...filters, from: v })} placeholder="از تاریخ" />
+          <JalaliInput value={filters.to} onChange={(v) => setFilters({ ...filters, to: v })} placeholder="تا تاریخ" />
+          <button disabled={busy}>اعمال فیلتر</button>
+        </form>
+      </div>
+      <div className="panel">
+        <div className="panel-title"><span>رویدادهای سامانه</span><small>{fa(meta.total)} مورد</small></div>
+        <table>
+          <thead><tr><th>زمان</th><th>کاربر</th><th>عملیات</th><th>شرح</th><th>IP</th></tr></thead>
+          <tbody>
+            {items.map((item) => (
+              <React.Fragment key={item.id}>
+                <tr className={`log-row ${item.action === 'login_failed' || item.action.includes('delete') ? 'log-alert' : ''}`}>
+                  <td>{fa(item.created_at_jalali)}</td>
+                  <td>{item.user?.name || '—'}</td>
+                  <td><span className="chip static">{item.action_label || LOG_ACTION_LABELS[item.action] || item.action}</span></td>
+                  <td className="log-summary">{item.summary}</td>
+                  <td className="log-ip">{fa(item.ip_address || '—')}</td>
+                </tr>
+                {item.details && (
+                  <tr className="log-details-row">
+                    <td colSpan="5">
+                      <button type="button" className="ghost" onClick={() => setExpanded(expanded === item.id ? null : item.id)}>
+                        {expanded === item.id ? 'بستن جزئیات' : 'جزئیات'}
+                      </button>
+                      {expanded === item.id && (
+                        <pre className="log-details" dir="ltr">{JSON.stringify(item.details, null, 2)}</pre>
+                      )}
+                    </td>
+                  </tr>
+                )}
+              </React.Fragment>
+            ))}
+            {!items.length && <tr><td colSpan="5" className="empty-row">داده‌ای برای این فیلترها وجود ندارد.</td></tr>}
+          </tbody>
+        </table>
+        {meta.last_page > 1 && (
+          <div className="pagination">
+            <button type="button" className="ghost" disabled={busy || meta.current_page <= 1} onClick={() => goPage(meta.current_page - 1)}>قبلی</button>
+            {Array.from({ length: meta.last_page }, (_, i) => i + 1).map((p) => (
+              <button key={p} type="button" className={p === meta.current_page ? '' : 'ghost'} disabled={busy} onClick={() => goPage(p)}>{fa(p)}</button>
+            ))}
+            <button type="button" className="ghost" disabled={busy || meta.current_page >= meta.last_page} onClick={() => goPage(meta.current_page + 1)}>بعدی</button>
+          </div>
+        )}
       </div>
     </>
   )

@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Support\Jalali;
+use Carbon\CarbonInterface;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -18,11 +19,11 @@ class BalanceChange extends Model
     protected $fillable = [
         'product_id', 'user_id', 'person_id', 'from_person_id', 'to_person_id',
         'type', 'direction', 'record_in_balance', 'change_amount', 'unit_price', 'total_price',
-        'settlement_method', 'settlement_date', 'previous_quantity', 'new_quantity',
-        'note', 'parent_id',
+        'settlement_method', 'settlement_date', 'trade_date', 'previous_quantity', 'new_quantity',
+        'note', 'parent_id', 'created_at',
     ];
 
-    protected $appends = ['created_at_jalali', 'settlement_date_jalali'];
+    protected $appends = ['created_at_jalali', 'settlement_date_jalali', 'trade_date_jalali'];
 
     protected function casts(): array
     {
@@ -34,6 +35,7 @@ class BalanceChange extends Model
             'unit_price' => 'float',
             'total_price' => 'float',
             'settlement_date' => 'date:Y-m-d',
+            'trade_date' => 'date:Y-m-d',
         ];
     }
 
@@ -80,5 +82,23 @@ class BalanceChange extends Model
     public function getSettlementDateJalaliAttribute(): ?string
     {
         return Jalali::format($this->settlement_date, false);
+    }
+
+    public function getTradeDateJalaliAttribute(): ?string
+    {
+        return Jalali::format($this->trade_date, false);
+    }
+
+    /**
+     * زمان مؤثر رکورد در تراز و گزارش‌ها: تاریخ معامله اگر ثبت شده
+     * باشد وگرنه زمان ایجاد رکورد.
+     */
+    public function effectiveDate(): string
+    {
+        $value = $this->trade_date ?? $this->created_at;
+
+        return $value instanceof CarbonInterface
+            ? $value->toDateString()
+            : (string) $value;
     }
 }

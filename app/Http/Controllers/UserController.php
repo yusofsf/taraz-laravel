@@ -2,7 +2,9 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\ActivityLog;
 use App\Models\User;
+use App\Support\ActivityLogger;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
@@ -13,7 +15,7 @@ class UserController extends Controller
     public function index(): JsonResponse
     {
         return response()->json(
-            User::select('id', 'name', 'mobile', 'is_admin', 'can_add_users', 'can_add_products', 'can_edit_products', 'can_delete_products', 'can_change_balance', 'can_edit_history', 'can_delete_history', 'can_edit_persons', 'can_delete_persons', 'can_manage_permissions')
+            User::select('id', 'name', 'mobile', 'is_admin', 'can_add_users', 'can_add_products', 'can_edit_products', 'can_delete_products', 'can_change_balance', 'can_edit_history', 'can_delete_history', 'can_edit_persons', 'can_delete_persons', 'can_manage_permissions', 'can_view_logs')
                 ->latest()
                 ->get()
         );
@@ -34,10 +36,24 @@ class UserController extends Controller
             'can_edit_persons' => 'boolean',
             'can_delete_persons' => 'boolean',
             'can_manage_permissions' => 'boolean',
+            'can_view_logs' => 'boolean',
         ]);
         $data['password'] = Hash::make('123456789');
 
-        return response()->json(User::create($data), 201);
+        $user = User::create($data);
+        $actor = User::find($request->session()->get('user_id'));
+
+        ActivityLogger::log(
+            ActivityLog::ACTION_USER_CREATE,
+            "افزودن کاربر {$user->name}",
+            ['mobile' => $user->mobile],
+            $actor,
+            'user',
+            $user->id,
+            $request->ip(),
+        );
+
+        return response()->json($user, 201);
     }
 
     public function update(Request $request, User $user): JsonResponse
@@ -52,12 +68,36 @@ class UserController extends Controller
             'password' => 'nullable|string|min:9|max:100',
         ]);
 
+        $oldName = $user->name;
+        $oldMobile = $user->mobile;
+
         $user->name = $data['name'];
         $user->mobile = $data['mobile'];
         if (! empty($data['password'])) {
             $user->password = Hash::make($data['password']);
         }
         $user->save();
+
+        $changes = [];
+        if ($oldName !== $user->name) {
+            $changes[] = "نام: {$oldName} → {$user->name}";
+        }
+        if ($oldMobile !== $user->mobile) {
+            $changes[] = 'موبایل تغییر کرد';
+        }
+        if (! empty($data['password'])) {
+            $changes[] = 'رمز عبور تغییر کرد';
+        }
+
+        ActivityLogger::log(
+            ActivityLog::ACTION_USER_UPDATE,
+            'ویرایش کاربر '.$oldName.($changes === [] ? ' (بدون تغییر)' : ' ('.implode('، ', $changes).')'),
+            $changes === [] ? null : ['changes' => $changes],
+            User::find($request->session()->get('user_id')),
+            'user',
+            $user->id,
+            $request->ip(),
+        );
 
         return response()->json($user);
     }
@@ -79,10 +119,52 @@ class UserController extends Controller
             'can_edit_persons' => 'boolean',
             'can_delete_persons' => 'boolean',
             'can_manage_permissions' => 'boolean',
+            'can_view_logs' => 'boolean',
         ]);
+
+        $changes = [];
+        foreach ($data as $permission => $value) {
+            $old = (bool) $user->{$permission};
+            if ($old !== (bool) $value) {
+                $changes[] = sprintf('%s: %s', __($permission), $value ? 'داده شد' : ' گرفته شد');
+            }
+        }
 
         $user->update($data);
 
+        ActivityLogger::log(
+            ActivityLog::ACTION_PERMISSION_UPDATE,
+            'تغییر دسترسی‌های '.$user->name.($changes === [] ? ' (بدون تغییر)' : ''),
+            $changes === [] ? null : ['changes' => $changes],
+            User::find($request->session()->get('user_id')),
+            'user',
+            $user->id,
+            $request->ip(),
+        );
+
         return response()->json($user);
+    }
+
+    public function destroyUser(Request $request, User $user): JsonResponse
+    {
+        if ($user->is_admin || $user->id === $request->session()->get('user_id')) {
+            return response()->json(['message' => 'حذف مدیر اصلی یا کاربر فعلی مجاز نیست.'], 422);
+        }
+
+        $name = $user->name;
+        $id = $user->id;
+        $user->delete();
+
+        ActivityLogger::log(
+            ActivityLog::ACTION_USER_DELETE,
+            "حذف کاربر {$name}",
+            null,
+            User::find(request()->session()->get('user_id')),
+            'user',
+            $id,
+            request()->ip(),
+        );
+
+        return response()->json(['message' => 'حذف شد.']);
     }
 }

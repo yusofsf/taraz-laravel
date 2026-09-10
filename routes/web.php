@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\ActivityLogController;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\PersonController;
 use App\Http\Controllers\ProductController;
@@ -39,7 +40,7 @@ Route::middleware('web.auth')->group(function () {
                 return response()->json(['message' => $exception->getMessage()], 422);
             }
             if ($gregorian !== null) {
-                $query->whereDate('created_at', $operator, $gregorian);
+                $query->whereRaw("coalesce(trade_date, date(created_at)) $operator ?", $gregorian);
             }
         }
 
@@ -53,5 +54,7 @@ Route::middleware('web.auth')->group(function () {
     Route::post('/api/users', [UserController::class, 'store'])->middleware('permission:can_add_users');
     Route::put('/api/users/{user}', [UserController::class, 'update'])->middleware('permission:can_manage_permissions');
     Route::put('/api/users/{user}/permissions', [UserController::class, 'updatePermissions'])->middleware('permission:can_manage_permissions');
-    Route::delete('/api/users/{user}', [UserController::class, 'destroy'])->middleware('permission:can_add_users');
+    Route::delete('/api/users/{user}', [UserController::class, 'destroyUser'])->middleware('permission:can_add_users');
+    Route::get('/api/logs', [ActivityLogController::class, 'index'])->middleware('permission:can_view_logs');
+    Route::get('/api/logs/options', [ActivityLogController::class, 'options'])->middleware('permission:can_view_logs');
 });

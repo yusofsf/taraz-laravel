@@ -7,6 +7,7 @@ use App\Models\Person;
 use App\Models\PersonProduct;
 use App\Models\Product;
 use App\Models\User;
+use App\Support\Jalali;
 use Illuminate\Foundation\Testing\LazilyRefreshDatabase;
 use Tests\TestCase;
 
@@ -39,6 +40,7 @@ class TradeSettlementTest extends TestCase
                 'direction' => 'خرید',
                 'quantity' => 2,
                 'unit_price' => 1000,
+                'trade_date' => '1405/06/01',
                 'settlement_method' => 'کاغذ',
                 'settlement_date' => '1405/06/01',
                 'person_id' => $this->ali->id,
@@ -66,6 +68,7 @@ class TradeSettlementTest extends TestCase
                 'direction' => 'فروش',
                 'quantity' => 1.5,
                 'unit_price' => 2000,
+                'trade_date' => '1405/06/01',
                 'settlement_method' => 'ریال',
                 'settlement_date' => '1405/06/01',
             ])
@@ -83,6 +86,7 @@ class TradeSettlementTest extends TestCase
                 'direction' => 'خرید',
                 'quantity' => 3,
                 'unit_price' => 500,
+                'trade_date' => '1405/06/01',
                 'settlement_method' => 'حواله',
                 'settlement_medium' => 'ریال',
                 'settlement_date' => '1405/06/01',
@@ -92,11 +96,103 @@ class TradeSettlementTest extends TestCase
             ->assertStatus(201);
 
         $rial = Product::where('name', 'ریال')->first();
+        $trade = BalanceChange::where('type', 'trade')->first();
 
         $this->assertSame(3.0, (float) $this->gold->fresh()->quantity);
         $this->assertSame(0.0, (float) $rial->quantity);
+        $this->assertSame($this->ali->id, $trade->from_person_id);
+        $this->assertSame($this->reza->id, $trade->to_person_id);
         $this->assertSame(-1500.0, (float) PersonProduct::where('person_id', $this->ali->id)->where('product_id', $rial->id)->value('quantity'));
         $this->assertSame(1500.0, (float) PersonProduct::where('person_id', $this->reza->id)->where('product_id', $rial->id)->value('quantity'));
+    }
+
+    public function test_deleting_havale_trade_rolls_back_person_balances(): void
+    {
+        $this->actingAsSession($this->admin)
+            ->postJson('/api/products/'.$this->gold->id.'/balance', [
+                'direction' => 'خرید',
+                'quantity' => 2,
+                'unit_price' => 500,
+                'trade_date' => '1405/06/01',
+                'settlement_method' => 'حواله',
+                'settlement_medium' => 'ریال',
+                'settlement_date' => '1405/06/01',
+                'from_person_id' => $this->ali->id,
+                'to_person_id' => $this->reza->id,
+            ])
+            ->assertStatus(201);
+
+        $trade = BalanceChange::where('type', 'trade')->first();
+        $rial = Product::where('name', 'ریال')->first();
+
+        $this->actingAsSession($this->admin)
+            ->deleteJson('/api/history/'.$trade->id)
+            ->assertStatus(204);
+
+        $this->assertSame(0.0, (float) $this->gold->fresh()->quantity);
+        $this->assertSame(0.0, (float) $rial->fresh()->quantity);
+        $this->assertSame(0.0, (float) PersonProduct::where('person_id', $this->ali->id)->where('product_id', $rial->id)->value('quantity'));
+        $this->assertSame(0.0, (float) PersonProduct::where('person_id', $this->reza->id)->where('product_id', $rial->id)->value('quantity'));
+        $this->assertSame(0, BalanceChange::count());
+    }
+
+    public function test_deleting_legacy_havale_trade_without_persons_on_trade_row_still_rolls_back(): void
+    {
+        // رکوردهای قدیمی طرف‌های حواله را فقط روی رکورد تسویه دارند، نه روی خود معامله
+        $this->actingAsSession($this->admin)
+            ->postJson('/api/products/'.$this->gold->id.'/balance', [
+                'direction' => 'خرید',
+                'quantity' => 2,
+                'unit_price' => 500,
+                'trade_date' => '1405/06/01',
+                'settlement_method' => 'حواله',
+                'settlement_medium' => 'ریال',
+                'settlement_date' => '1405/06/01',
+                'from_person_id' => $this->ali->id,
+                'to_person_id' => $this->reza->id,
+            ])
+            ->assertStatus(201);
+
+        BalanceChange::where('type', 'trade')->update(['from_person_id' => null, 'to_person_id' => null]);
+
+        $trade = BalanceChange::where('type', 'trade')->first();
+        $rial = Product::where('name', 'ریال')->first();
+
+        $this->actingAsSession($this->admin)
+            ->deleteJson('/api/history/'.$trade->id)
+            ->assertStatus(204);
+
+        $this->assertSame(0.0, (float) PersonProduct::where('person_id', $this->ali->id)->where('product_id', $rial->id)->value('quantity'));
+        $this->assertSame(0.0, (float) PersonProduct::where('person_id', $this->reza->id)->where('product_id', $rial->id)->value('quantity'));
+    }
+
+    public function test_editing_havale_trade_amount_syncs_person_balances(): void
+    {
+        $this->actingAsSession($this->admin)
+            ->postJson('/api/products/'.$this->gold->id.'/balance', [
+                'direction' => 'خرید',
+                'quantity' => 2,
+                'unit_price' => 500,
+                'trade_date' => '1405/06/01',
+                'settlement_method' => 'حواله',
+                'settlement_medium' => 'ریال',
+                'settlement_date' => '1405/06/01',
+                'from_person_id' => $this->ali->id,
+                'to_person_id' => $this->reza->id,
+            ])
+            ->assertStatus(201);
+
+        $trade = BalanceChange::where('type', 'trade')->first();
+        $rial = Product::where('name', 'ریال')->first();
+
+        $this->actingAsSession($this->admin)
+            ->putJson('/api/history/'.$trade->id, ['amount' => 3])
+            ->assertStatus(200);
+
+        // 2×500=1000 قبلاً جابه‌جا شده بود؛ حالا باید 3×500=1500 باشد
+        $this->assertSame(-1500.0, (float) PersonProduct::where('person_id', $this->ali->id)->where('product_id', $rial->id)->value('quantity'));
+        $this->assertSame(1500.0, (float) PersonProduct::where('person_id', $this->reza->id)->where('product_id', $rial->id)->value('quantity'));
+        $this->assertSame(1500.0, (float) $trade->fresh()->total_price);
     }
 
     public function test_havale_requires_two_different_persons(): void
@@ -106,6 +202,7 @@ class TradeSettlementTest extends TestCase
                 'direction' => 'خرید',
                 'quantity' => 1,
                 'unit_price' => 100,
+                'trade_date' => '1405/06/01',
                 'settlement_method' => 'حواله',
                 'from_person_id' => $this->ali->id,
                 'to_person_id' => $this->ali->id,
@@ -120,6 +217,7 @@ class TradeSettlementTest extends TestCase
                 'direction' => 'خرید',
                 'quantity' => 2,
                 'unit_price' => 1000,
+                'trade_date' => '1405/06/01',
                 'settlement_method' => 'کاغذ',
                 'settlement_date' => '1405/06/01',
                 'person_id' => $this->ali->id,
@@ -140,12 +238,15 @@ class TradeSettlementTest extends TestCase
 
     public function test_today_invoices_reports_averages(): void
     {
+        // فاکتورهای امروز بر اساس تاریخ معامله فیلتر می‌شوند، نه زمان ثبت
+        $todayJalali = Jalali::format(today(), false);
         foreach ([['خرید', 2, 1000], ['فروش', 1, 3000]] as [$direction, $quantity, $price]) {
             $this->actingAsSession($this->admin)
                 ->postJson('/api/products/'.$this->gold->id.'/balance', [
                     'direction' => $direction,
                     'quantity' => $quantity,
                     'unit_price' => $price,
+                    'trade_date' => $todayJalali,
                     'settlement_method' => 'کاغذ',
                     'settlement_date' => '1405/06/01',
                 ])
@@ -175,6 +276,7 @@ class TradeSettlementTest extends TestCase
                 'record_in_balance' => false,
                 'quantity' => 2,
                 'unit_price' => 1000,
+                'trade_date' => '1405/06/01',
                 'settlement_method' => 'کاغذ',
                 'settlement_date' => '1405/06/01',
                 'person_id' => $this->ali->id,
@@ -205,10 +307,73 @@ class TradeSettlementTest extends TestCase
                 'direction' => 'خرید',
                 'quantity' => 1,
                 'unit_price' => 100,
+                'trade_date' => '1405/06/01',
                 'settlement_method' => 'کاغذ',
             ])
             ->assertStatus(422)
             ->assertJsonValidationErrors('settlement_date');
+    }
+
+    public function test_trade_date_is_required_and_stored(): void
+    {
+        $this->actingAsSession($this->admin)
+            ->postJson('/api/products/'.$this->gold->id.'/balance', [
+                'direction' => 'خرید',
+                'quantity' => 1,
+                'unit_price' => 100,
+                'settlement_method' => 'کاغذ',
+                'settlement_date' => '1405/06/01',
+            ])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('trade_date');
+
+        $this->actingAsSession($this->admin)
+            ->postJson('/api/products/'.$this->gold->id.'/balance', [
+                'direction' => 'خرید',
+                'quantity' => 1,
+                'unit_price' => 100,
+                'trade_date' => '1405/06/05',
+                'settlement_method' => 'کاغذ',
+                'settlement_date' => '1405/06/10',
+            ])
+            ->assertStatus(201);
+
+        $trade = BalanceChange::where('type', 'trade')->first();
+        $this->assertSame('2026-08-27', $trade->trade_date->format('Y-m-d'));
+        $this->assertSame('2026-09-01', $trade->settlement_date->format('Y-m-d'));
+    }
+
+    public function test_history_filters_by_user_entered_trade_date(): void
+    {
+        $this->actingAsSession($this->admin)
+            ->postJson('/api/products/'.$this->gold->id.'/balance', [
+                'direction' => 'خرید',
+                'quantity' => 1,
+                'unit_price' => 100,
+                'trade_date' => '1405/06/05',
+                'settlement_method' => 'کاغذ',
+                'settlement_date' => '1405/06/05',
+            ])
+            ->assertStatus(201);
+
+        // معامله با تاریخ ورودی کاربر، نه زمان ثبت رکورد؛ رکورد تسویه‌ی فرعی هم
+        // چون trade_date ندارد با تاریخ ایجاد (امروز) حساب می‌شود
+        $this->actingAsSession($this->admin)
+            ->getJson('/api/history?from=1405/06/01&to=1405/06/30&all=1')
+            ->assertOk()
+            ->assertJsonCount(2);
+
+        // بازه‌ای که تاریخ ایجادِ رکوردها هم داخلش نیست
+        $this->actingAsSession($this->admin)
+            ->getJson('/api/history?from=1405/05/01&to=1405/05/31&all=1')
+            ->assertOk()
+            ->assertJsonCount(0);
+
+        // فاکتورهای امروز هم بر اساس تاریخ معامله کار می‌کنند
+        $this->actingAsSession($this->admin)
+            ->getJson('/api/invoices/today')
+            ->assertOk()
+            ->assertJsonPath('stats.count', 0);
     }
 
     public function test_toggling_record_in_balance_applies_and_removes_balance_effects(): void
@@ -219,6 +384,7 @@ class TradeSettlementTest extends TestCase
                 'record_in_balance' => false,
                 'quantity' => 2,
                 'unit_price' => 1000,
+                'trade_date' => '1405/06/01',
                 'settlement_method' => 'کاغذ',
                 'settlement_date' => '1405/06/01',
                 'person_id' => $this->ali->id,

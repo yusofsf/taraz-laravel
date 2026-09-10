@@ -2,10 +2,13 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\ActivityLog;
 use App\Models\BalanceChange;
+use App\Models\Person;
 use App\Models\PersonProduct;
 use App\Models\Product;
 use App\Models\User;
+use App\Support\ActivityLogger;
 use App\Support\Jalali;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -45,6 +48,11 @@ class ProductController extends Controller
             ]);
         }
 
+        $this->logActivity($request, ActivityLog::ACTION_PRODUCT_CREATE, "افزودن کالا {$product->name}", [
+            'unit' => $product->unit,
+            'quantity' => (float) $product->quantity,
+        ], $product);
+
         return response()->json($product, 201);
     }
 
@@ -58,6 +66,8 @@ class ProductController extends Controller
         ]);
 
         $oldQuantity = (float) $product->quantity;
+        $oldName = $product->name;
+        $oldUnit = $product->unit;
 
         DB::transaction(function () use ($data, $product, $oldQuantity, $request) {
             $product->update($data);
@@ -78,6 +88,21 @@ class ProductController extends Controller
                 $this->recomputeProductHistory($product);
             }
         });
+
+        $changes = [];
+        if ($oldName !== $product->name) {
+            $changes[] = "نام: {$oldName} → {$product->name}";
+        }
+        if ($oldUnit !== $product->unit) {
+            $changes[] = "واحد: {$oldUnit} → {$product->unit}";
+        }
+        if ((float) $product->quantity !== $oldQuantity) {
+            $changes[] = sprintf('تراز اولیه: %s → %s', self::trimZeros($oldQuantity), self::trimZeros((float) $product->quantity));
+        }
+
+        $this->logActivity($request, ActivityLog::ACTION_PRODUCT_UPDATE, 'ویرایش کالا '.$oldName.($changes === [] ? '' : ' ('.implode('، ', $changes).')'), [
+            'changes' => $changes,
+        ], $product);
 
         return response()->json($product);
     }
@@ -113,6 +138,7 @@ class ProductController extends Controller
             'record_in_balance' => 'nullable|boolean',
             'quantity' => $this->quantityRule($product->unit).'|not_in:0',
             'unit_price' => 'required|numeric|min:0.01',
+            'trade_date' => 'required|string',
             'settlement_date' => 'required|string',
             'settlement_method' => 'required|in:حواله,کاغذ,ریال',
             'person_id' => 'nullable|integer|exists:persons,id',
@@ -132,12 +158,13 @@ class ProductController extends Controller
         }
 
         try {
-            $gregorian = Jalali::parseJalaliInput($request->input('settlement_date'));
+            $gregorianSettlement = Jalali::parseJalaliInput($request->input('settlement_date'));
+            $gregorianTrade = Jalali::parseJalaliInput($request->input('trade_date'));
         } catch (\InvalidArgumentException $exception) {
             return response()->json(['message' => $exception->getMessage()], 422);
         }
 
-        return response()->json(DB::transaction(function () use ($data, $gregorian, $request, $product) {
+        return response()->json(DB::transaction(function () use ($data, $gregorianSettlement, $gregorianTrade, $request, $product) {
             $method = $data['settlement_method'];
             $quantity = (float) $data['quantity'];
             $unitPrice = (float) $data['unit_price'];
@@ -160,6 +187,8 @@ class ProductController extends Controller
                 'product_id' => $product->id,
                 'user_id' => $request->session()->get('user_id'),
                 'person_id' => $data['person_id'] ?? null,
+                'from_person_id' => $data['from_person_id'] ?? null,
+                'to_person_id' => $data['to_person_id'] ?? null,
                 'type' => BalanceChange::TYPE_TRADE,
                 'direction' => $data['direction'],
                 'record_in_balance' => $inBalance,
@@ -167,7 +196,8 @@ class ProductController extends Controller
                 'unit_price' => $unitPrice,
                 'total_price' => $total,
                 'settlement_method' => $method,
-                'settlement_date' => $gregorian,
+                'settlement_date' => $gregorianSettlement,
+                'trade_date' => $gregorianTrade,
                 'previous_quantity' => $previous,
                 'new_quantity' => $inBalance ? $product->quantity : $previous,
                 'note' => $data['note'] ?? null,
@@ -176,6 +206,30 @@ class ProductController extends Controller
             if ($inBalance) {
                 $this->applySettlement($trade, $data['direction'], $total, $method, $data);
             }
+
+            $this->recomputeProductHistory($product);
+
+            $this->logActivity($request, ActivityLog::ACTION_TRADE, sprintf(
+                '%s %s %s به قیمت واحد %s (%s)',
+                $data['direction'],
+                self::trimZeros($quantity),
+                $product->name,
+                self::trimZeros($unitPrice),
+                $inBalance ? 'ثبت در تراز' : 'بدون ثبت در تراز',
+            ), [
+                'direction' => $data['direction'],
+                'quantity' => $quantity,
+                'unit_price' => $unitPrice,
+                'total_price' => $total,
+                'settlement_method' => $method,
+                'settlement_date' => $gregorianSettlement,
+                'trade_date' => $gregorianTrade,
+                'record_in_balance' => $inBalance,
+                'person' => $trade->person?->name,
+                'from_person' => $trade->fromPerson?->name,
+                'to_person' => $trade->toPerson?->name,
+                'note' => $data['note'] ?? null,
+            ], $product, $trade->id);
 
             return $trade->fresh(['product', 'person', 'fromPerson', 'toPerson']);
         }), 201);
@@ -195,10 +249,24 @@ class ProductController extends Controller
             return response()->json(['message' => 'این کالا در تاریخچه تراز ثبت شده است؛ ابتدا رکوردهای آن را حذف کنید.'], 409);
         }
 
+        $name = $product->name;
+        $productId = $product->id;
+
         DB::transaction(function () use ($product) {
             PersonProduct::where('product_id', $product->id)->delete();
             $product->delete();
         });
+
+        // کالا حذف شده است؛ نام و شناسه‌اش را همان‌جا در لاگ ثبت می‌کنیم
+        ActivityLogger::log(
+            ActivityLog::ACTION_PRODUCT_DELETE,
+            "حذف کالا {$name}",
+            ['unit' => $product->unit],
+            User::find(request()->session()->get('user_id')),
+            $name,
+            $productId,
+            request()->ip(),
+        );
 
         return response()->json(['message' => 'حذف شد.']);
     }
@@ -219,11 +287,11 @@ class ProductController extends Controller
             $product->increment('quantity', $data['amount']);
             $product->refresh();
 
-            if (! empty($data['person_id'])) {
-                $this->adjustPersonBalance((int) $data['person_id'], $product->id, (float) $data['amount']);
-            }
+            $person = ! empty($data['person_id'])
+                ? $this->adjustPersonBalance((int) $data['person_id'], $product->id, (float) $data['amount'])
+                : null;
 
-            return BalanceChange::create([
+            $change = BalanceChange::create([
                 'product_id' => $product->id,
                 'user_id' => $request->session()->get('user_id'),
                 'person_id' => $data['person_id'] ?? null,
@@ -233,6 +301,21 @@ class ProductController extends Controller
                 'new_quantity' => $product->quantity,
                 'note' => $data['note'] ?? null,
             ]);
+
+            $this->logActivity($request, ActivityLog::ACTION_ADJUST, sprintf(
+                'تعدیل تراز %s: %s%s',
+                $product->name,
+                ($data['amount'] > 0 ? '+' : '').self::trimZeros((float) $data['amount']),
+                $person ? " (شخص: {$person->name})" : '',
+            ), [
+                'amount' => (float) $data['amount'],
+                'previous_quantity' => (float) $previous,
+                'new_quantity' => (float) $product->quantity,
+                'person' => $person?->name,
+                'note' => $data['note'] ?? null,
+            ], $product, $change->id);
+
+            return $change;
         }), 201);
     }
 
@@ -249,8 +332,16 @@ class ProductController extends Controller
         $money = $this->moneyProduct($medium);
 
         if ($method === 'حواله') {
-            $this->adjustPersonBalance((int) $data['from_person_id'], $money->id, -$total);
-            $this->adjustPersonBalance((int) $data['to_person_id'], $money->id, $total);
+            $fromPersonId = $data['from_person_id'] ?? null;
+            $toPersonId = $data['to_person_id'] ?? null;
+
+            // در معامله‌های قدیمی طرفِ حواله ممکن است در دسترس نباشد؛ سمتِ خالی نادیده گرفته می‌شود
+            if ($fromPersonId !== null) {
+                $this->adjustPersonBalance((int) $fromPersonId, $money->id, -$total);
+            }
+            if ($toPersonId !== null) {
+                $this->adjustPersonBalance((int) $toPersonId, $money->id, $total);
+            }
 
             $previous = $money->quantity;
             BalanceChange::create([
@@ -304,13 +395,14 @@ class ProductController extends Controller
 
     /**
      * Today's buy/sale invoices with unit price, settlement and aggregated
-     * averages (prices and weights) for the day.
+     * averages (prices and weights) for the day. Trades are listed by the
+     * date the user entered for them, not the moment they got recorded.
      */
     public function todayInvoices(): JsonResponse
     {
         $trades = BalanceChange::with(['product:id,name,unit', 'person:id,name', 'fromPerson:id,name', 'toPerson:id,name'])
             ->where('type', BalanceChange::TYPE_TRADE)
-            ->whereDate('created_at', today())
+            ->whereRaw('coalesce(trade_date, date(created_at)) = ?', [today()->toDateString()])
             ->latest()
             ->get();
 
@@ -365,7 +457,8 @@ class ProductController extends Controller
                 return response()->json(['message' => $exception->getMessage()], 422);
             }
             if ($gregorian !== null) {
-                $query->whereDate('created_at', $operator, $gregorian);
+                // تاریخ مؤثر رکورد همان تاریخ معامله است؛ اگر ثبت نشده باشد زمان ایجاد رکورد می‌ماند
+                $query->whereRaw("coalesce(trade_date, date(created_at)) $operator ?", $gregorian);
             }
         }
 
@@ -399,11 +492,12 @@ class ProductController extends Controller
             'person_id' => 'nullable|integer|exists:persons,id',
         ]);
 
-        return response()->json(DB::transaction(function () use ($data, $change, $product) {
+        return response()->json(DB::transaction(function () use ($data, $request, $change, $product) {
             $newAmount = (float) $data['amount'];
             $wasInBalance = (bool) $change->record_in_balance;
             $inBalance = (bool) ($data['record_in_balance'] ?? $wasInBalance);
             $newPersonId = $data['person_id'] ?? null;
+            $oldAmount = (float) $change->change_amount;
 
             if ($wasInBalance && ! $inBalance) {
                 // تیک برداشته شد: اثر قبلی روی تراز کالا، شخص و تسویه برمی‌گردد
@@ -450,6 +544,20 @@ class ProductController extends Controller
 
             $this->recomputeProductHistory($product);
 
+            $this->logActivity($request, ActivityLog::ACTION_HISTORY_UPDATE, sprintf(
+                'ویرایش رکورد تاریخچه %s: مقدار %s → %s%s',
+                $product->name,
+                self::trimZeros($oldAmount),
+                self::trimZeros($newAmount),
+                $wasInBalance !== $inBalance ? '، '.($inBalance ? 'ثبت در تراز شد' : 'از تراز خارج شد') : '',
+            ), [
+                'change_id' => $change->id,
+                'old_amount' => $oldAmount,
+                'new_amount' => $newAmount,
+                'record_in_balance' => $inBalance,
+                'type' => $change->type,
+            ], $product, $change->id);
+
             return $change;
         }));
     }
@@ -484,14 +592,23 @@ class ProductController extends Controller
 
         if ($trade->settlement_method === 'حواله') {
             $money = $settlement->product;
-            $this->adjustPersonBalance((int) $trade->from_person_id, $money->id, $oldTotal - $newTotal);
-            $this->adjustPersonBalance((int) $trade->to_person_id, $money->id, $newTotal - $oldTotal);
+            // معامله‌های قدیمی طرف‌های حواله را روی خودشان ندارند؛ از رکورد تسویه خوانده می‌شوند
+            $fromPersonId = $trade->from_person_id ?? $settlement->from_person_id;
+            $toPersonId = $trade->to_person_id ?? $settlement->to_person_id;
+
+            if ($fromPersonId !== null) {
+                $this->adjustPersonBalance((int) $fromPersonId, $money->id, $oldTotal - $newTotal);
+            }
+            if ($toPersonId !== null) {
+                $this->adjustPersonBalance((int) $toPersonId, $money->id, $newTotal - $oldTotal);
+            }
         } else {
             $money = $settlement->product;
             $money->increment('quantity', $signed($newTotal) - $signed($oldTotal));
         }
 
         $settlement->update(['total_price' => $newTotal]);
+        $trade->update(['total_price' => $newTotal]);
         $this->recomputeProductHistory($money);
     }
 
@@ -499,9 +616,12 @@ class ProductController extends Controller
      * Deletes a history record and rolls its effect back on the product
      * and person balances, including its settlement side.
      */
-    public function destroyChange(BalanceChange $change): Response
+    public function destroyChange(Request $request, BalanceChange $change): Response
     {
         $product = $change->product;
+        $amount = (float) $change->change_amount;
+        $type = $change->type;
+        $changeId = $change->id;
 
         DB::transaction(function () use ($change, $product) {
             // رکوردهای بدون «ثبت در تراز» هیچ اثری روی تراز ندارند؛ فقط خودشان حذف می‌شوند
@@ -522,6 +642,16 @@ class ProductController extends Controller
             $this->recomputeProductHistory($product);
         });
 
+        $this->logActivity($request, ActivityLog::ACTION_HISTORY_DELETE, sprintf(
+            'حذف رکورد تاریخچه %s (مقدار %s)',
+            $product->name,
+            self::trimZeros($amount),
+        ), [
+            'change_id' => $changeId,
+            'amount' => $amount,
+            'type' => $type,
+        ], $product);
+
         return response()->noContent();
     }
 
@@ -541,8 +671,16 @@ class ProductController extends Controller
         $total = (float) $trade->total_price;
 
         if ($trade->settlement_method === 'حواله') {
-            $this->adjustPersonBalance((int) $trade->from_person_id, $settlement->product_id, $total);
-            $this->adjustPersonBalance((int) $trade->to_person_id, $settlement->product_id, -$total);
+            // معامله‌های قدیمی طرف‌های حواله را روی خودشان ندارند؛ از رکورد تسویه خوانده می‌شوند
+            $fromPersonId = $trade->from_person_id ?? $settlement->from_person_id;
+            $toPersonId = $trade->to_person_id ?? $settlement->to_person_id;
+
+            if ($fromPersonId !== null) {
+                $this->adjustPersonBalance((int) $fromPersonId, $settlement->product_id, $total);
+            }
+            if ($toPersonId !== null) {
+                $this->adjustPersonBalance((int) $toPersonId, $settlement->product_id, -$total);
+            }
         } else {
             $signed = $trade->direction === 'خرید' ? -$total : $total;
             $settlement->product->decrement('quantity', $signed);
@@ -571,13 +709,15 @@ class ProductController extends Controller
         }
     }
 
-    private function adjustPersonBalance(int $personId, int $productId, float $delta): void
+    private function adjustPersonBalance(int $personId, int $productId, float $delta): Person
     {
         $personProduct = PersonProduct::firstOrCreate(
             ['person_id' => $personId, 'product_id' => $productId],
             ['quantity' => 0]
         );
         $personProduct->increment('quantity', $delta);
+
+        return Person::find($personId);
     }
 
     /**
@@ -609,9 +749,33 @@ class ProductController extends Controller
     {
         return [
             'products' => Product::latest()->get(['id', 'name', 'sku', 'quantity', 'unit']),
-            'changes_today' => BalanceChange::whereDate('created_at', today())->count(),
+            'changes_today' => BalanceChange::whereRaw('coalesce(trade_date, date(created_at)) = ?', [today()->toDateString()])->count(),
             'users' => User::count(),
             'today_jalali' => Jalali::formatLong(today()),
         ];
+    }
+
+    /**
+     * @param  array<string, mixed>|null  $details
+     */
+    private function logActivity(Request $request, string $action, string $summary, ?array $details = null, ?Product $product = null, ?int $changeId = null): void
+    {
+        ActivityLogger::log(
+            $action,
+            $summary,
+            $details,
+            User::find($request->session()->get('user_id')),
+            $product?->name,
+            $changeId ?? $product?->id,
+            $request->ip(),
+        );
+    }
+
+    /**
+     * Formats a quantity for log summaries without trailing zeros (5.500 → ۵٫۵).
+     */
+    private static function trimZeros(float $value): string
+    {
+        return rtrim(rtrim(number_format($value, 3, '.', ''), '0'), '.') ?: '0';
     }
 }
