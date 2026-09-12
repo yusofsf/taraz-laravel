@@ -394,6 +394,29 @@ class ProductController extends Controller
     }
 
     /**
+     * بدهکاری/بستانکاری اشخاص روی یک کالا: مثبت یعنی بدهکار، منفی یعنی طلبکار،
+     * صفر یعنی تسویه؛ اشخاص بدون سابقه هم با تراز صفر برمی‌گردند.
+     */
+    public function personBalances(Product $product): JsonResponse
+    {
+        $persons = Person::with('products:id,name,unit')->orderBy('name')->get();
+
+        return response()->json([
+            'product' => $product->only(['id', 'name', 'unit', 'quantity']),
+            'persons' => $persons->map(function (Person $person) use ($product) {
+                $quantity = (float) ($person->products->find($product->id)?->pivot->quantity ?? 0);
+
+                return [
+                    'id' => $person->id,
+                    'name' => $person->name,
+                    'quantity' => $quantity,
+                    'status' => Person::balanceStatus($quantity),
+                ];
+            })->values(),
+        ]);
+    }
+
+    /**
      * Today's buy/sale invoices with unit price, settlement and aggregated
      * averages (prices and weights) for the day. Trades are listed by the
      * date the user entered for them, not the moment they got recorded.
