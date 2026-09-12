@@ -61,8 +61,8 @@ const api = async (url, opt = {}) => {
 
 const Msg = ({ x }) => x && <p className="msg">{x}</p>
 
-// نمایش همه اعداد سایت با ارقام فارسی (ورودی فرم‌ها لاتین می‌ماند)
-const fa = (x) => String(x ?? '').replace(/[0-9.]/g, (c) => (c === '.' ? '٫' : '۰۱۲۳۴۵۶۷۸۹'[c]))
+// نمایش همه اعداد سایت با ارقام فارسی (ورودی فرم‌ها لاتین می‌ماند)؛ ممیز اعشار به‌جای نقطه، «/» است
+const fa = (x) => String(x ?? '').replace(/[0-9.]/g, (c) => (c === '.' ? '/' : '۰۱۲۳۴۵۶۷۸۹'[c]))
 
 const fmt = (x) => fa(+(+x).toFixed(3))
 
@@ -798,7 +798,9 @@ function History({ user, ok }) {
     e.preventDefault()
     if (busy) return
     setBusy(true)
-    api(`/api/history/${editing.id}`, { method: 'PUT', body: { amount: +editing.change_amount, note: editing.note, person_id: editing.person_id || null, record_in_balance: !!editing.record_in_balance } })
+    const body = { amount: +editing.change_amount, note: editing.note, person_id: editing.person_id || null, record_in_balance: !!editing.record_in_balance }
+    if (editing.type === 'trade') body.unit_price = +editing.unit_price
+    api(`/api/history/${editing.id}`, { method: 'PUT', body })
       .then(() => { setEditing(null); ok('رکورد ویرایش شد.'); load(); loadChart() })
       .catch((x) => setError(x.message))
       .finally(() => setBusy(false))
@@ -838,6 +840,16 @@ function History({ user, ok }) {
                       <td colSpan={canEdit || canDelete ? 6 : 5}>
                         <form className="form" onSubmit={saveEdit}>
                           <input required type="number" step="any" value={editing.change_amount} onChange={(e) => setEditing({ ...editing, change_amount: e.target.value })} />
+                          {editing.type === 'trade' && (
+                            <input
+                              required
+                              type="number"
+                              step="any"
+                              placeholder="قیمت واحد"
+                              value={editing.unit_price ?? ''}
+                              onChange={(e) => setEditing({ ...editing, unit_price: e.target.value })}
+                            />
+                          )}
                           <label className="check">
                             <input type="checkbox" checked={!!editing.record_in_balance} onChange={(e) => setEditing({ ...editing, record_in_balance: e.target.checked })} />ثبت در تراز
                           </label>

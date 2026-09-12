@@ -429,6 +429,150 @@ class TradeSettlementTest extends TestCase
         $this->assertSame(0, BalanceChange::where('type', 'settlement')->count());
     }
 
+    public function test_editing_trade_unit_price_syncs_settlement(): void
+    {
+        $this->actingAsSession($this->admin)
+            ->postJson('/api/products/'.$this->gold->id.'/balance', [
+                'direction' => 'خرید',
+                'quantity' => 2,
+                'unit_price' => 1000,
+                'trade_date' => '1405/06/01',
+                'settlement_method' => 'کاغذ',
+                'settlement_date' => '1405/06/01',
+            ])
+            ->assertStatus(201);
+
+        $trade = BalanceChange::where('type', 'trade')->first();
+
+        $this->actingAsSession($this->admin)
+            ->putJson('/api/history/'.$trade->id, ['amount' => 2, 'unit_price' => 1500])
+            ->assertStatus(200);
+
+        // 2×1000 قبلاً از کاغذ کم شده بود؛ حالا باید 2×1500 باشد
+        $this->assertSame(-3000.0, (float) Product::where('name', 'کاغذ')->value('quantity'));
+        $this->assertSame(1500.0, (float) $trade->fresh()->unit_price);
+        $this->assertSame(3000.0, (float) $trade->fresh()->total_price);
+        $this->assertSame(3000.0, (float) BalanceChange::where('type', 'settlement')->value('total_price'));
+    }
+
+    public function test_editing_trade_unit_price_and_amount_together_sync_settlement(): void
+    {
+        $this->actingAsSession($this->admin)
+            ->postJson('/api/products/'.$this->gold->id.'/balance', [
+                'direction' => 'فروش',
+                'quantity' => 2,
+                'unit_price' => 1000,
+                'trade_date' => '1405/06/01',
+                'settlement_method' => 'ریال',
+                'settlement_date' => '1405/06/01',
+            ])
+            ->assertStatus(201);
+
+        $trade = BalanceChange::where('type', 'trade')->first();
+
+        $this->actingAsSession($this->admin)
+            ->putJson('/api/history/'.$trade->id, ['amount' => -3, 'unit_price' => 2000])
+            ->assertStatus(200);
+
+        // فروش ۳ گرم با قیمت ۲۰۰۰: ۶۰۰۰ ریال باید اضافه شده باشد (قبلاً ۲۰۰۰ بود)
+        $this->assertSame(6000.0, (float) Product::where('name', 'ریال')->value('quantity'));
+        $this->assertSame(6000.0, (float) $trade->fresh()->total_price);
+    }
+
+    public function test_editing_havale_trade_unit_price_syncs_person_balances(): void
+    {
+        $this->actingAsSession($this->admin)
+            ->postJson('/api/products/'.$this->gold->id.'/balance', [
+                'direction' => 'خرید',
+                'quantity' => 2,
+                'unit_price' => 500,
+                'trade_date' => '1405/06/01',
+                'settlement_method' => 'حواله',
+                'settlement_medium' => 'ریال',
+                'settlement_date' => '1405/06/01',
+                'from_person_id' => $this->ali->id,
+                'to_person_id' => $this->reza->id,
+            ])
+            ->assertStatus(201);
+
+        $trade = BalanceChange::where('type', 'trade')->first();
+        $rial = Product::where('name', 'ریال')->first();
+
+        $this->actingAsSession($this->admin)
+            ->putJson('/api/history/'.$trade->id, ['amount' => 2, 'unit_price' => 700])
+            ->assertStatus(200);
+
+        // 2×500=1000 قبلاً جابه‌جا شده بود؛ حالا باید 2×700=1400 باشد
+        $this->assertSame(-1400.0, (float) PersonProduct::where('person_id', $this->ali->id)->where('product_id', $rial->id)->value('quantity'));
+        $this->assertSame(1400.0, (float) PersonProduct::where('person_id', $this->reza->id)->where('product_id', $rial->id)->value('quantity'));
+        $this->assertSame(1400.0, (float) $trade->fresh()->total_price);
+    }
+
+    public function test_editing_unit_price_of_trade_outside_balance_updates_total_only(): void
+    {
+        $this->actingAsSession($this->admin)
+            ->postJson('/api/products/'.$this->gold->id.'/balance', [
+                'direction' => 'خرید',
+                'record_in_balance' => false,
+                'quantity' => 2,
+                'unit_price' => 1000,
+                'trade_date' => '1405/06/01',
+                'settlement_method' => 'کاغذ',
+                'settlement_date' => '1405/06/01',
+            ])
+            ->assertStatus(201);
+
+        $trade = BalanceChange::where('type', 'trade')->first();
+
+        $this->actingAsSession($this->admin)
+            ->putJson('/api/history/'.$trade->id, ['amount' => 2, 'unit_price' => 2500, 'record_in_balance' => false])
+            ->assertStatus(200);
+
+        // خارج از تراز: هیچ ترازی تغییر نمی‌کند؛ فقط قیمت کل رکورد به‌روز می‌شود
+        $this->assertSame(0.0, (float) $this->gold->fresh()->quantity);
+        $this->assertSame(0.0, (float) Product::where('name', 'کاغذ')->value('quantity'));
+        $this->assertSame(5000.0, (float) $trade->fresh()->total_price);
+        $this->assertSame(0, BalanceChange::where('type', 'settlement')->count());
+    }
+
+    public function test_editing_adjust_record_ignores_unit_price(): void
+    {
+        $this->actingAsSession($this->admin)
+            ->postJson('/api/products/'.$this->gold->id.'/balance', ['amount' => 10])
+            ->assertStatus(201);
+
+        $adjust = BalanceChange::where('type', 'adjust')->first();
+
+        $this->actingAsSession($this->admin)
+            ->putJson('/api/history/'.$adjust->id, ['amount' => 12, 'unit_price' => 999])
+            ->assertStatus(200);
+
+        // تعدیل قیمت واحد ندارد؛ مقدار ارسالی نادیده گرفته می‌شود
+        $this->assertSame(0.0, (float) $adjust->fresh()->unit_price);
+        $this->assertSame(12.0, (float) $this->gold->fresh()->quantity);
+    }
+
+    public function test_unit_price_must_be_positive(): void
+    {
+        $this->actingAsSession($this->admin)
+            ->postJson('/api/products/'.$this->gold->id.'/balance', [
+                'direction' => 'خرید',
+                'quantity' => 2,
+                'unit_price' => 1000,
+                'trade_date' => '1405/06/01',
+                'settlement_method' => 'کاغذ',
+                'settlement_date' => '1405/06/01',
+            ])
+            ->assertStatus(201);
+
+        $trade = BalanceChange::where('type', 'trade')->first();
+
+        $this->actingAsSession($this->admin)
+            ->putJson('/api/history/'.$trade->id, ['amount' => 2, 'unit_price' => 0])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('unit_price');
+    }
+
     private function actingAsSession(User $user): self
     {
         return $this->withSession(['user_id' => $user->id]);

@@ -487,6 +487,7 @@ class ProductController extends Controller
 
         $data = $request->validate([
             'amount' => $this->quantityRule($product->unit).'|not_in:0',
+            'unit_price' => 'nullable|numeric|min:0.01',
             'record_in_balance' => 'nullable|boolean',
             'note' => 'nullable|string|max:200',
             'person_id' => 'nullable|integer|exists:persons,id',
@@ -498,6 +499,11 @@ class ProductController extends Controller
             $inBalance = (bool) ($data['record_in_balance'] ?? $wasInBalance);
             $newPersonId = $data['person_id'] ?? null;
             $oldAmount = (float) $change->change_amount;
+            $oldUnitPrice = (float) $change->unit_price;
+            // معامله قیمت واحد دارد؛ برای تعدیل، قیمت کل رکورد صفر می‌ماند
+            $newUnitPrice = $change->type === BalanceChange::TYPE_TRADE && $request->filled('unit_price')
+                ? (float) $data['unit_price']
+                : $oldUnitPrice;
 
             if ($wasInBalance && ! $inBalance) {
                 // تیک برداشته شد: اثر قبلی روی تراز کالا، شخص و تسویه برمی‌گردد
@@ -524,6 +530,7 @@ class ProductController extends Controller
                 'person_id' => $newPersonId,
                 'record_in_balance' => $inBalance,
                 'change_amount' => $newAmount,
+                'unit_price' => $newUnitPrice,
                 'new_quantity' => $inBalance ? $change->previous_quantity + $newAmount : $change->previous_quantity,
                 'note' => $data['note'] ?? null,
             ]);
@@ -531,29 +538,39 @@ class ProductController extends Controller
             if ($change->type === BalanceChange::TYPE_TRADE) {
                 if (! $wasInBalance && $inBalance) {
                     $trade = $change->fresh();
-                    $total = round($newAmount * (float) $trade->unit_price, 2);
+                    $total = round($newAmount * $newUnitPrice, 2);
                     $trade->update(['total_price' => $total]);
                     $this->applySettlement($trade, (string) $trade->direction, $total, (string) $trade->settlement_method, [
                         'from_person_id' => $trade->from_person_id,
                         'to_person_id' => $trade->to_person_id,
                     ]);
                 } elseif ($inBalance) {
-                    $this->syncTradeSettlement($change, $newAmount);
+                    $this->syncTradeSettlement($change, $newAmount, $newUnitPrice);
+                } else {
+                    // معامله خارج از تراز رکورد تسویه ندارد؛ فقط قیمت کل خود رکورد به‌روز می‌شود
+                    $change->update(['total_price' => round($newAmount * $newUnitPrice, 2)]);
                 }
             }
 
             $this->recomputeProductHistory($product);
 
+            $priceChange = $newUnitPrice !== $oldUnitPrice
+                ? sprintf('، قیمت واحد %s → %s', self::trimZeros($oldUnitPrice), self::trimZeros($newUnitPrice))
+                : '';
+
             $this->logActivity($request, ActivityLog::ACTION_HISTORY_UPDATE, sprintf(
-                'ویرایش رکورد تاریخچه %s: مقدار %s → %s%s',
+                'ویرایش رکورد تاریخچه %s: مقدار %s → %s%s%s',
                 $product->name,
                 self::trimZeros($oldAmount),
                 self::trimZeros($newAmount),
+                $priceChange,
                 $wasInBalance !== $inBalance ? '، '.($inBalance ? 'ثبت در تراز شد' : 'از تراز خارج شد') : '',
             ), [
                 'change_id' => $change->id,
                 'old_amount' => $oldAmount,
                 'new_amount' => $newAmount,
+                'old_unit_price' => $oldUnitPrice,
+                'new_unit_price' => $newUnitPrice,
                 'record_in_balance' => $inBalance,
                 'type' => $change->type,
             ], $product, $change->id);
@@ -563,16 +580,16 @@ class ProductController extends Controller
     }
 
     /**
-     * Recomputes a trade's total after its quantity changed and moves the
-     * settlement (money product or حواله persons) to match.
+     * Recomputes a trade's total after its quantity or unit price changed
+     * and moves the settlement (money product or حواله persons) to match.
      */
-    private function syncTradeSettlement(BalanceChange $trade, float $newAmount): void
+    private function syncTradeSettlement(BalanceChange $trade, float $newAmount, ?float $newUnitPrice = null): void
     {
         if (! $trade->settlement_method) {
             return;
         }
 
-        $unitPrice = (float) $trade->unit_price;
+        $unitPrice = $newUnitPrice ?? (float) $trade->unit_price;
         $oldTotal = (float) $trade->total_price;
         $newTotal = round(abs($newAmount) * $unitPrice, 2);
         $signed = fn (float $total): float => $trade->direction === 'خرید' ? -$total : $total;
