@@ -739,27 +739,11 @@ class ProductController extends Controller
 
     /**
      * Rebuilds previous/new quantities of the whole product chain so the
-     * records stay consistent after an edit or delete. The base is derived
-     * from the product's actual balance minus the sum of all changes.
+     * records stay consistent after an edit or delete; see Product::recomputeHistory.
      */
     private function recomputeProductHistory(Product $product): void
     {
-        $changes = BalanceChange::where('product_id', $product->id)
-            ->where('record_in_balance', true)
-            ->orderBy('created_at')
-            ->orderBy('id')
-            ->get();
-
-        $running = (float) $product->quantity - (float) $changes->sum('change_amount');
-
-        foreach ($changes as $change) {
-            $previous = $running;
-            $running = $previous + (float) $change->change_amount;
-
-            if ((float) $change->previous_quantity !== $previous || (float) $change->new_quantity !== $running) {
-                $change->forceFill(['previous_quantity' => $previous, 'new_quantity' => $running])->save();
-            }
-        }
+        $product->recomputeHistory();
     }
 
     public function dashboard(): array

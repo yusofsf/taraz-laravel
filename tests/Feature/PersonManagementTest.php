@@ -147,6 +147,103 @@ class PersonManagementTest extends TestCase
         $this->assertDatabaseHas('person_product', ['person_id' => $person->id, 'product_id' => $paper->id, 'quantity' => -1200]);
     }
 
+    public function test_update_applies_balance_delta_to_overall_product_balance(): void
+    {
+        $person = Person::create(['name' => 'علی']);
+        $gold = Product::create(['name' => 'طلا', 'quantity' => 100, 'unit' => 'گرم']);
+
+        $this->actingAsSession($this->editor)
+            ->putJson("/api/persons/{$person->id}", [
+                'name' => 'علی',
+                'products' => [
+                    ['id' => $gold->id, 'quantity' => 8],
+                ],
+            ])
+            ->assertStatus(200);
+
+        // دلتای +۸ روی تراز کلی کالا هم اعمال شده است
+        $this->assertSame(108.0, (float) $gold->fresh()->quantity);
+
+        $change = BalanceChange::where('product_id', $gold->id)->where('note', 'ویرایش دستی تراز شخص')->first();
+        $this->assertNotNull($change);
+        $this->assertSame(8.0, (float) $change->change_amount);
+        $this->assertSame($person->id, $change->person_id);
+        $this->assertSame(100.0, (float) $change->previous_quantity);
+        $this->assertSame(108.0, (float) $change->new_quantity);
+    }
+
+    public function test_update_applies_negative_delta_and_zero_out(): void
+    {
+        $person = Person::create(['name' => 'علی']);
+        $gold = Product::create(['name' => 'طلا', 'quantity' => 50, 'unit' => 'گرم']);
+        PersonProduct::create(['person_id' => $person->id, 'product_id' => $gold->id, 'quantity' => 5]);
+
+        $this->actingAsSession($this->editor)
+            ->putJson("/api/persons/{$person->id}", [
+                'name' => 'علی',
+                'products' => [
+                    ['id' => $gold->id, 'quantity' => -3],
+                ],
+            ])
+            ->assertStatus(200);
+
+        // مقدار قبلی ۵ بوده؛ مقدار جدید -۳ یعنی دلتای -۸
+        $this->assertSame(42.0, (float) $gold->fresh()->quantity);
+        $this->assertDatabaseHas('person_product', ['person_id' => $person->id, 'product_id' => $gold->id, 'quantity' => -3]);
+
+        // صفر کردن مقدار هم دلتا می‌سازد و تسویه در تاریخچه ثبت می‌شود
+        $this->actingAsSession($this->editor)
+            ->putJson("/api/persons/{$person->id}", [
+                'name' => 'علی',
+                'products' => [
+                    ['id' => $gold->id, 'quantity' => 0],
+                ],
+            ])
+            ->assertStatus(200);
+
+        $this->assertSame(45.0, (float) $gold->fresh()->quantity);
+        $this->assertSame(2, BalanceChange::where('product_id', $gold->id)->where('note', 'ویرایش دستی تراز شخص')->count());
+    }
+
+    public function test_update_without_quantity_change_records_nothing(): void
+    {
+        $person = Person::create(['name' => 'علی']);
+        $gold = Product::create(['name' => 'طلا', 'quantity' => 20, 'unit' => 'گرم']);
+        PersonProduct::create(['person_id' => $person->id, 'product_id' => $gold->id, 'quantity' => 5]);
+
+        $this->actingAsSession($this->editor)
+            ->putJson("/api/persons/{$person->id}", [
+                'name' => 'علی رضایی',
+                'products' => [
+                    ['id' => $gold->id, 'quantity' => 5],
+                ],
+            ])
+            ->assertStatus(200);
+
+        // مقدار کالا تغییر نکرده؛ نه تراز کلی عوض می‌شود نه رکوردی ثبت می‌شود
+        $this->assertSame(20.0, (float) $gold->fresh()->quantity);
+        $this->assertSame(0, BalanceChange::where('product_id', $gold->id)->count());
+    }
+
+    public function test_update_rejects_duplicate_product_entries(): void
+    {
+        $person = Person::create(['name' => 'علی']);
+        $gold = Product::create(['name' => 'طلا', 'quantity' => 10, 'unit' => 'گرم']);
+
+        $this->actingAsSession($this->editor)
+            ->putJson("/api/persons/{$person->id}", [
+                'name' => 'علی',
+                'products' => [
+                    ['id' => $gold->id, 'quantity' => 1],
+                    ['id' => $gold->id, 'quantity' => 2],
+                ],
+            ])
+            ->assertStatus(422);
+
+        // دلتا دوبار اعمال نشده است
+        $this->assertSame(10.0, (float) $gold->fresh()->quantity);
+    }
+
     public function test_update_rejects_invalid_product_quantity(): void
     {
         $person = Person::create(['name' => 'علی']);

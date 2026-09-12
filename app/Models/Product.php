@@ -21,4 +21,29 @@ class Product extends Model
     {
         return $this->hasMany(BalanceChange::class);
     }
+
+    /**
+     * زنجیره‌ی previous/new رکوردهای کالا را بازسازی می‌کند تا پس از هر
+     * ویرایش یا حذف، سازگار با تراز واقعی کالا بمانند. مبنای زنجیره از
+     * تراز واقعی کالا منهای مجموع همه‌ی تغییرات به دست می‌آید.
+     */
+    public function recomputeHistory(): void
+    {
+        $changes = $this->balanceChanges()
+            ->where('record_in_balance', true)
+            ->orderBy('created_at')
+            ->orderBy('id')
+            ->get();
+
+        $running = (float) $this->quantity - (float) $changes->sum('change_amount');
+
+        foreach ($changes as $change) {
+            $previous = $running;
+            $running = $previous + (float) $change->change_amount;
+
+            if ((float) $change->previous_quantity !== $previous || (float) $change->new_quantity !== $running) {
+                $change->forceFill(['previous_quantity' => $previous, 'new_quantity' => $running])->save();
+            }
+        }
+    }
 }

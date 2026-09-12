@@ -72,6 +72,96 @@ const faText = (x) => String(x ?? '').replace(/([0-9])\.([0-9])/g, '$1/$2').repl
 
 const fmt = (x) => fa(+(+x).toFixed(3))
 
+// --- جابه‌جایی بین فیلدهای فرم با کلیدهای جهت (مشابه اکسل) ---
+// نزدیک‌ترین فیلدِ هم‌ردیف/هم‌ستون در جهت فلش پیدا و فوکوس می‌شود؛
+// وقتی تقویم شمسی یا منوی انتخاب شخص باز باشد، فلش‌ها به همان منو تعلق می‌گیرند.
+const NAV_FIELDS = 'input, select, textarea, button'
+const NAV_ARROWS = { ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0] }
+
+const navCandidate = (el) => el instanceof HTMLElement
+  && el.matches(NAV_FIELDS)
+  && !el.disabled
+  && !el.readOnly
+  && el.type !== 'radio'
+  && el.type !== 'hidden'
+  && el.getClientRects().length > 0
+  && !el.closest('aside, .rjd-root, .picker-menu')
+
+// فلش افقی در ورودی متنی فقط وقتی caret در لبه متن است فیلد را عوض می‌کند؛
+// متن دارای حروف فارسی راست‌به‌چپ دیده می‌شود و بقیه چپ‌به‌راست
+const caretAtEdge = (el, key) => {
+  let pos = null
+  try { pos = el.selectionStart } catch { return true }
+  if (pos === null) return true
+  const atStart = pos <= 0
+  const atEnd = pos >= el.value.length
+  const rtlText = getComputedStyle(el).direction === 'rtl' && /[\u0600-\u06FF]/.test(el.value)
+  if (key === 'ArrowLeft') return rtlText ? atEnd : atStart
+  return rtlText ? atStart : atEnd
+}
+
+const findNavTarget = (from, key) => {
+  const [dx, dy] = NAV_ARROWS[key]
+  const fr = from.getBoundingClientRect()
+  const fromX = fr.left + fr.width / 2
+  const fromY = fr.top + fr.height / 2
+  let best = null
+  let bestScore = Infinity
+  for (const el of document.querySelectorAll(NAV_FIELDS)) {
+    if (el === from || !navCandidate(el)) continue
+    const r = el.getBoundingClientRect()
+    const mx = r.left + r.width / 2 - fromX
+    const my = r.top + r.height / 2 - fromY
+    const along = mx * dx + my * dy
+    if (along < 2) continue // باید در جهت فلش، جلوتر از فیلد فعلی باشد
+    const across = Math.abs(mx * dy - my * dx)
+    // فیلدِ هم‌تراز (فاصله عرضی کم) اولویت دارد و بعد نزدیک‌ترین
+    const score = along + across * 3
+    if (score < bestScore) { bestScore = score; best = el }
+  }
+  return best
+}
+
+let arrowNavFocusing = false
+
+const navFocus = (el) => {
+  // فوکوسِ ناوبری تقویم شمسی را باز نمی‌کند تا با فلش‌ها از فیلد تاریخ هم بگذریم؛
+  // با کلیک یا Tab تقویم مثل قبل باز می‌شود
+  arrowNavFocusing = true
+  el.focus()
+  setTimeout(() => { arrowNavFocusing = false }, 0)
+  if ((el instanceof HTMLInputElement && el.type !== 'number') || el instanceof HTMLTextAreaElement) {
+    try { const end = el.value.length; el.setSelectionRange(end, end) } catch {}
+  }
+}
+
+const handleArrowNav = (e) => {
+  if (!Object.prototype.hasOwnProperty.call(NAV_ARROWS, e.key)) return
+  if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey || e.isComposing) return
+  // وقتی تقویم شمسی یا منوی اشخاص باز است، فلش‌ها کار همان منو را می‌کنند
+  if ([...document.querySelectorAll('.rjd-root, .picker-menu')].some((el) => el.getClientRects().length > 0)) return
+  const from = e.target
+  if (!(from instanceof HTMLElement) || !from.matches(NAV_FIELDS) || from.closest('aside, .rjd-root, .picker-menu')) return
+  if (from.disabled || from.type === 'radio') return
+
+  const horizontal = NAV_ARROWS[e.key][1] === 0
+  const textLike = from instanceof HTMLTextAreaElement
+    || (from instanceof HTMLInputElement && ['text', 'search', 'url', 'tel', 'email', 'password'].includes(from.type || 'text'))
+  if (horizontal && textLike && !caretAtEdge(from, e.key)) return
+
+  const target = findNavTarget(from, e.key)
+  if (!target) return
+  e.preventDefault()
+  navFocus(target)
+}
+
+function useArrowNav() {
+  useEffect(() => {
+    document.addEventListener('keydown', handleArrowNav)
+    return () => document.removeEventListener('keydown', handleArrowNav)
+  }, [])
+}
+
 const EMPTY_PRODUCT = { name: '', sku: '', quantity: 0, unit: 'عدد' }
 const EMPTY_CHANGE = { product_id: '', direction: 'خرید', record_in_balance: true, quantity: '', unit_price: '', settlement_method: 'کاغذ', settlement_medium: 'ریال', trade_date: '', settlement_date: '', person_id: '', from_person_id: '', to_person_id: '', note: '' }
 const EMPTY_PERSON = { name: '', mobile: '', note: '' }
@@ -95,7 +185,7 @@ function JalaliInput({ value, onChange, placeholder, required = false }) {
         dir="ltr"
         placeholder={placeholder || '۱۴۰۵/۰۶/۰۱'}
         value={value}
-        onFocus={() => setOpen(true)}
+        onFocus={() => { if (!arrowNavFocusing) setOpen(true) }}
         onChange={(e) => {
           onChange(e.target.value)
           parseJalaliDate(e.target.value, 'YYYY/MM/DD', 'fa')
@@ -148,6 +238,7 @@ function App() {
 
   const load = () => api('/api/me').then(setUser).catch(() => setUser(null))
   useEffect(() => { load() }, [])
+  useArrowNav()
 
   if (!user) return <Login ok={load} />
 
@@ -1004,7 +1095,7 @@ function Persons({ user, ok }) {
           </form>
           {editing?.products?.length > 0 && (
             <div className="person-products">
-              <small className="hint">بدهکاری/بستانکاری هر کالا؛ مقدار مثبت یعنی بدهکار، منفی یعنی طلبکار و صفر یعنی تسویه.</small>
+              <small className="hint">بدهکاری/بستانکاری هر کالا؛ مقدار مثبت یعنی بدهکار، منفی یعنی طلبکار و صفر یعنی تسویه. تغییر هر مقدار به همان اندازه در تراز کلی کالا و تاریخچه هم ثبت می‌شود.</small>
               <div className="person-products-grid">
                 {editing.products.map((product) => (
                   <label className="person-product-row" key={product.id}>

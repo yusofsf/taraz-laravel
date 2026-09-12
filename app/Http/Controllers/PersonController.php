@@ -80,27 +80,29 @@ class PersonController extends Controller
             'mobile' => 'nullable|regex:/^09[0-9]{9}$/|unique:persons,mobile,'.$person->id,
             'note' => 'nullable|string|max:200',
             'products' => 'nullable|array',
-            'products.*.id' => 'required_with:products|integer|exists:products,id',
+            'products.*.id' => 'required_with:products|integer|exists:products,id|distinct',
             'products.*.quantity' => 'required_with:products|numeric|decimal:0,3|min:'.-Product::MAX_QUANTITY.'|max:'.Product::MAX_QUANTITY,
         ]);
 
-        $result = DB::transaction(function () use ($data, $person) {
+        $result = DB::transaction(function () use ($data, $person, $request) {
             $oldName = $person->name;
             $oldMobile = $person->mobile;
             $oldNote = $person->note;
 
             $person->update($this->normalize(collect($data)->except('products')->all()));
 
-            // ویرایش دستی بدهکاری/بستانکاری: مقدار هر کالا مستقیم روی تراز شخص اعمال می‌شود
+            // ویرایش دستی بدهکاری/بستانکاری: دلتای هر کالا هم روی تراز کلی کالا اعمال
+            // می‌شود و هم به‌عنوان تعدیل در تاریخچه ثبت می‌شود تا تراز و گزارش‌ها سازگار بمانند
             $balanceEdits = [];
             foreach ($data['products'] ?? [] as $product) {
                 $productId = (int) $product['id'];
+                $item = Product::find($productId);
                 $oldQuantity = (float) ($person->products->find($productId)?->pivot->quantity ?? 0);
                 $newQuantity = (float) $product['quantity'];
                 if ($oldQuantity !== $newQuantity) {
                     $balanceEdits[] = sprintf(
                         'تراز «%s»: %s → %s',
-                        Product::find($productId)?->name ?? $productId,
+                        $item?->name ?? $productId,
                         rtrim(rtrim(number_format($oldQuantity, 3, '/', ''), '0'), '/'),
                         rtrim(rtrim(number_format($newQuantity, 3, '/', ''), '0'), '/'),
                     );
@@ -110,6 +112,26 @@ class PersonController extends Controller
                     ['person_id' => $person->id, 'product_id' => $productId],
                     ['quantity' => $newQuantity]
                 );
+
+                $delta = $newQuantity - $oldQuantity;
+                if ($delta !== 0.0) {
+                    $previous = (float) $item->quantity;
+                    $item->increment('quantity', $delta);
+                    $item->refresh();
+
+                    BalanceChange::create([
+                        'product_id' => $productId,
+                        'user_id' => $request->session()->get('user_id'),
+                        'person_id' => $person->id,
+                        'type' => BalanceChange::TYPE_ADJUST,
+                        'change_amount' => $delta,
+                        'previous_quantity' => $previous,
+                        'new_quantity' => (float) $item->quantity,
+                        'note' => 'ویرایش دستی تراز شخص',
+                    ]);
+
+                    $item->recomputeHistory();
+                }
             }
 
             $changes = [];
