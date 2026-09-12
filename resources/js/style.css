@@ -26,3 +26,21 @@ button.ghost{background:#eef2f7;color:#53617a}
 .person-product-row span{display:flex;flex-direction:column;gap:2px}
 .person-product-row em{font-style:normal;color:var(--muted);font-size:11px}
 .person-product-row input{max-width:110px}
+.balance-section{margin:20px 0 24px}
+.balance-section .panel-title{margin-bottom:14px}
+.balance-totals{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:14px}
+.balance-total{border:1px solid #e5f0ed;background:#fff;border-radius:12px;padding:14px 16px;display:flex;flex-direction:column;gap:6px}
+.balance-total small{color:var(--muted);font-size:12px}
+.balance-total b{font-size:20px;direction:ltr;text-align:right}
+.balance-total.debtor{background:#fff7f6;border-color:#f3d5d0}
+.balance-total.debtor b{color:#b3402f}
+.balance-total.creditor{background:#f2fbf8;border-color:#c9ecdf}
+.balance-total.creditor b{color:#087e6d}
+.balance-total.net{background:#f7f9fc;border-color:#dbe3ee}
+.balance-total.net b{color:#3c4d68}
+.balance-chips{display:flex;flex-wrap:wrap;gap:8px}
+.balance-chips .chip{font-size:13px;padding:8px 13px}
+.panel .form.range-form{margin-top:6px}
+.detail-panel{padding:26px 30px}
+.detail-panel h3{margin:0 0 19px}
+.detail-panel table{margin-top:16px}

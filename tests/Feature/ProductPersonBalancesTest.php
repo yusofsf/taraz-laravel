@@ -48,6 +48,10 @@ class ProductPersonBalancesTest extends TestCase
         $this->assertSame($this->product->id, $response->json('product.id'));
         $this->assertSame('طلا', $response->json('product.name'));
 
+        $this->assertEquals(12.5, $response->json('totals.debtor'));
+        $this->assertEquals(4.0, $response->json('totals.creditor'));
+        $this->assertEquals(8.5, $response->json('totals.net'));
+
         $persons = collect($response->json('persons'));
         $this->assertSame(4, $persons->count());
 
@@ -58,6 +62,19 @@ class ProductPersonBalancesTest extends TestCase
         $this->assertSame('تسویه', $persons->firstWhere('name', 'تسویه‌شده')['status']);
         $this->assertSame(0, $persons->firstWhere('name', 'بدون سابقه')['quantity']);
         $this->assertSame('تسویه', $persons->firstWhere('name', 'بدون سابقه')['status']);
+    }
+
+    public function test_totals_are_zero_without_any_person_balance(): void
+    {
+        Person::factory()->create(['name' => 'بدون سابقه']);
+
+        $response = $this->actingAsSession($this->admin)
+            ->getJson("/api/products/{$this->product->id}/persons")
+            ->assertOk();
+
+        $this->assertEquals(0.0, $response->json('totals.debtor'));
+        $this->assertEquals(0.0, $response->json('totals.creditor'));
+        $this->assertEquals(0.0, $response->json('totals.net'));
     }
 
     public function test_persons_are_ordered_by_name(): void

@@ -313,7 +313,8 @@ function Dashboard({ user }) {
   const [data, setData] = useState({ products: [] })
   const [selected, setSelected] = useState(null)
   const [history, setHistory] = useState([])
-  const [balances, setBalances] = useState([])
+  // تا وقتی پاسخ تراز اشخاص برنگشته، totals/persons ناموجود است و جمع‌ها به‌جای عدد «—» می‌مانند
+  const [balances, setBalances] = useState(null)
   const [range, setRange] = useState({ from: '', to: '' })
   const [error, setError] = useState('')
 
@@ -336,13 +337,14 @@ function Dashboard({ user }) {
 
   // بدهکاری/بستانکاری اشخاص روی کالای انتخاب‌شده؛ تراز جاری است و به بازه تاریخ وابسته نیست
   const fetchBalances = (id) => {
-    api(`/api/products/${id}/persons`).then((d) => setBalances(d?.persons || [])).catch(() => setBalances([]))
+    api(`/api/products/${id}/persons`).then(setBalances).catch(() => setBalances({ totals: {}, persons: [] }))
   }
 
   const choose = (item) => {
     setSelected({ ...item })
     const r = { from: '', to: '' }
     setRange(r)
+    setBalances(null)
     fetchHistory(item.id, r)
     fetchBalances(item.id)
   }
@@ -352,7 +354,11 @@ function Dashboard({ user }) {
     if (selected) fetchHistory(selected.id, range)
   }
 
-  const openBalances = (balances || []).filter((p) => p.quantity !== 0)
+  // تا رسیدن پاسخ، totals/persons وجود ندارند و همه اعداد حالت بارگذاری می‌مانند
+  const openBalances = (balances?.persons || []).filter((p) => p.quantity !== 0)
+  const totals = balances?.totals
+  const loadingTotals = totals === undefined || totals === null
+  const totalCell = (value) => (loadingTotals ? '—' : `${fmt(value)} ${selected.unit || 'عدد'}`)
 
   return (
     <>
@@ -376,26 +382,36 @@ function Dashboard({ user }) {
         </div>
       </div>
       {selected && (
-        <div className="panel">
+        <div className="panel detail-panel">
           <h3>جزئیات {selected.name}</h3>
-          <div className="panel-title">
-            <span>بدهکاری و بستانکاری اشخاص</span>
-            <small>مقدار مثبت یعنی بدهکار، منفی یعنی طلبکار</small>
+          <div className="balance-section">
+            <div className="panel-title">
+              <span>بدهکاری و بستانکاری اشخاص</span>
+              <small>مثبت یعنی بدهکار، منفی یعنی طلبکار</small>
+            </div>
+            <div className="balance-totals">
+              <div className="balance-total debtor"><small>جمع کل بدهکاری‌ها</small><b>{totalCell(totals?.debtor)}</b></div>
+              <div className="balance-total creditor"><small>جمع کل بستانکاری‌ها</small><b>{totalCell(totals?.creditor)}</b></div>
+              <div className="balance-total net">
+                <small>خالص {loadingTotals ? '' : `(${fmt(totals.debtor)} − ${fmt(totals.creditor)})`}</small>
+                <b>{totalCell(totals?.net)}</b>
+              </div>
+            </div>
+            {openBalances.length
+              ? (
+                  <div className="chips balance-chips">
+                    {openBalances.map((person) => (
+                      <span className={`chip ${statusClass(person.status)}`} key={person.id}>
+                        {person.name}:{' '}
+                        {person.quantity === 0
+                          ? 'تسویه'
+                          : `${fmt(Math.abs(person.quantity))} ${selected.unit || 'عدد'} ${person.status}`}
+                      </span>
+                    ))}
+                  </div>
+                )
+              : <small className="hint">{loadingTotals ? 'در حال بارگذاری…' : 'هیچ شخصی بدهکار یا طلبکارِ این کالا نیست.'}</small>}
           </div>
-          {openBalances.length
-            ? (
-                <div className="chips">
-                  {openBalances.map((person) => (
-                    <span className={`chip ${statusClass(person.status)}`} key={person.id}>
-                      {person.name}:{' '}
-                      {person.quantity === 0
-                        ? 'تسویه'
-                        : `${fmt(Math.abs(person.quantity))} ${selected.unit || 'عدد'} ${person.status}`}
-                    </span>
-                  ))}
-                </div>
-              )
-            : <small className="hint">هیچ شخصی بدهکار یا طلبکارِ این کالا نیست.</small>}
           <form className="form range-form" onSubmit={applyRange}>
             <JalaliInput value={range.from} onChange={(v) => setRange({ ...range, from: v })} placeholder="از تاریخ" />
             <JalaliInput value={range.to} onChange={(v) => setRange({ ...range, to: v })} placeholder="تا تاریخ" />

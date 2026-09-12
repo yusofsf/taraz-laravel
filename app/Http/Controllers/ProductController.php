@@ -396,23 +396,31 @@ class ProductController extends Controller
     /**
      * بدهکاری/بستانکاری اشخاص روی یک کالا: مثبت یعنی بدهکار، منفی یعنی طلبکار،
      * صفر یعنی تسویه؛ اشخاص بدون سابقه هم با تراز صفر برمی‌گردند.
+     * جمع‌ها هم برمی‌گردند: مجموع بدهکاری مثبت‌ها و مجموع طلبکاری منفی‌ها.
      */
     public function personBalances(Product $product): JsonResponse
     {
         $persons = Person::with('products:id,name,unit')->orderBy('name')->get();
 
+        $balances = $persons->map(function (Person $person) use ($product) {
+            $quantity = (float) ($person->products->find($product->id)?->pivot->quantity ?? 0);
+
+            return [
+                'id' => $person->id,
+                'name' => $person->name,
+                'quantity' => $quantity,
+                'status' => Person::balanceStatus($quantity),
+            ];
+        })->values();
+
         return response()->json([
             'product' => $product->only(['id', 'name', 'unit', 'quantity']),
-            'persons' => $persons->map(function (Person $person) use ($product) {
-                $quantity = (float) ($person->products->find($product->id)?->pivot->quantity ?? 0);
-
-                return [
-                    'id' => $person->id,
-                    'name' => $person->name,
-                    'quantity' => $quantity,
-                    'status' => Person::balanceStatus($quantity),
-                ];
-            })->values(),
+            'totals' => [
+                'debtor' => (float) $balances->sum(fn (array $balance) => max(0, $balance['quantity'])),
+                'creditor' => (float) $balances->sum(fn (array $balance) => max(0, -$balance['quantity'])),
+                'net' => (float) $balances->sum('quantity'),
+            ],
+            'persons' => $balances,
         ]);
     }
 
