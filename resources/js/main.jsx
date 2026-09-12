@@ -393,7 +393,7 @@ function Dashboard({ user }) {
               <div className="balance-total debtor"><small>جمع کل بدهکاری‌ها</small><b>{totalCell(totals?.debtor)}</b></div>
               <div className="balance-total creditor"><small>جمع کل بستانکاری‌ها</small><b>{totalCell(totals?.creditor)}</b></div>
               <div className="balance-total net">
-                <small>خالص {loadingTotals ? '' : `(${fmt(totals.debtor)} − ${fmt(totals.creditor)})`}</small>
+                <small>خالص {loadingTotals ? '' : `(${fmt(totals.creditor)} − ${fmt(totals.debtor)})`}</small>
                 <b>{totalCell(totals?.net)}</b>
               </div>
             </div>

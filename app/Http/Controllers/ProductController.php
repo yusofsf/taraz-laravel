@@ -396,7 +396,8 @@ class ProductController extends Controller
     /**
      * بدهکاری/بستانکاری اشخاص روی یک کالا: مثبت یعنی بدهکار، منفی یعنی طلبکار،
      * صفر یعنی تسویه؛ اشخاص بدون سابقه هم با تراز صفر برمی‌گردند.
-     * جمع‌ها هم برمی‌گردند: مجموع بدهکاری مثبت‌ها و مجموع طلبکاری منفی‌ها.
+     * جمع‌ها هم برمی‌گردند: مجموع بدهکاری مثبت‌ها، مجموع طلبکاری منفی‌ها
+     * و خالص = بستانکار منهای بدهکار.
      */
     public function personBalances(Product $product): JsonResponse
     {
@@ -413,12 +414,15 @@ class ProductController extends Controller
             ];
         })->values();
 
+        $debtorTotal = (float) $balances->sum(fn (array $balance) => max(0, $balance['quantity']));
+        $creditorTotal = (float) $balances->sum(fn (array $balance) => max(0, -$balance['quantity']));
+
         return response()->json([
             'product' => $product->only(['id', 'name', 'unit', 'quantity']),
             'totals' => [
-                'debtor' => (float) $balances->sum(fn (array $balance) => max(0, $balance['quantity'])),
-                'creditor' => (float) $balances->sum(fn (array $balance) => max(0, -$balance['quantity'])),
-                'net' => (float) $balances->sum('quantity'),
+                'debtor' => $debtorTotal,
+                'creditor' => $creditorTotal,
+                'net' => (float) ($creditorTotal - $debtorTotal),
             ],
             'persons' => $balances,
         ]);

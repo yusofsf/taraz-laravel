@@ -50,7 +50,7 @@ class ProductPersonBalancesTest extends TestCase
 
         $this->assertEquals(12.5, $response->json('totals.debtor'));
         $this->assertEquals(4.0, $response->json('totals.creditor'));
-        $this->assertEquals(8.5, $response->json('totals.net'));
+        $this->assertEquals(-8.5, $response->json('totals.net'));
 
         $persons = collect($response->json('persons'));
         $this->assertSame(4, $persons->count());
