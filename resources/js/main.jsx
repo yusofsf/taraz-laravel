@@ -64,6 +64,12 @@ const Msg = ({ x }) => x && <p className="msg">{x}</p>
 // نمایش همه اعداد سایت با ارقام فارسی (ورودی فرم‌ها لاتین می‌ماند)؛ ممیز اعشار به‌جای نقطه، «/» است
 const fa = (x) => String(x ?? '').replace(/[0-9.]/g, (c) => (c === '.' ? '/' : '۰۱۲۳۴۵۶۷۸۹'[c]))
 
+// IP نقطه‌های جداکننده دارد که ممیز اعشار نیست؛ فقط ارقام آن فارسی می‌شود
+const faIp = (x) => String(x ?? '').replace(/[0-9]/g, (c) => '۰۱۲۳۴۵۶۷۸۹'[c])
+
+// متن آزاد مثل شرح لاگ: فقط نقطهٔ میان دو رقم ممیز است؛ نقطهٔ نام‌ها دست‌نخورده می‌ماند
+const faText = (x) => String(x ?? '').replace(/([0-9])\.([0-9])/g, '$1/$2').replace(/[0-9]/g, (c) => '۰۱۲۳۴۵۶۷۸۹'[c])
+
 const fmt = (x) => fa(+(+x).toFixed(3))
 
 const EMPTY_PRODUCT = { name: '', sku: '', quantity: 0, unit: 'عدد' }
@@ -1265,8 +1271,8 @@ function ActivityLogs() {
                   <td>{fa(item.created_at_jalali)}</td>
                   <td>{item.user?.name || '—'}</td>
                   <td><span className="chip static">{item.action_label || LOG_ACTION_LABELS[item.action] || item.action}</span></td>
-                  <td className="log-summary">{item.summary}</td>
-                  <td className="log-ip">{fa(item.ip_address || '—')}</td>
+                  <td className="log-summary">{faText(item.summary)}</td>
+                  <td className="log-ip">{faIp(item.ip_address || '—')}</td>
                 </tr>
                 {item.details && (
                   <tr className="log-details-row">
@@ -1275,7 +1281,7 @@ function ActivityLogs() {
                         {expanded === item.id ? 'بستن جزئیات' : 'جزئیات'}
                       </button>
                       {expanded === item.id && (
-                        <pre className="log-details" dir="ltr">{JSON.stringify(item.details, null, 2)}</pre>
+                        <pre className="log-details" dir="ltr">{faText(JSON.stringify(item.details, null, 2))}</pre>
                       )}
                     </td>
                   </tr>

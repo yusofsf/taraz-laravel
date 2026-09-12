@@ -101,8 +101,8 @@ class PersonController extends Controller
                     $balanceEdits[] = sprintf(
                         'تراز «%s»: %s → %s',
                         Product::find($productId)?->name ?? $productId,
-                        rtrim(rtrim(number_format($oldQuantity, 3, '.', ''), '0'), '.'),
-                        rtrim(rtrim(number_format($newQuantity, 3, '.', ''), '0'), '.'),
+                        rtrim(rtrim(number_format($oldQuantity, 3, '/', ''), '0'), '/'),
+                        rtrim(rtrim(number_format($newQuantity, 3, '/', ''), '0'), '/'),
                     );
                 }
 

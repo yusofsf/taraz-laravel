@@ -789,10 +789,11 @@ class ProductController extends Controller
     }
 
     /**
-     * Formats a quantity for log summaries without trailing zeros (5.500 → ۵٫۵).
+     * Formats a quantity for log summaries without trailing zeros; the
+     * decimal separator is «/» per site convention (5.500 → ۵/۵).
      */
     private static function trimZeros(float $value): string
     {
-        return rtrim(rtrim(number_format($value, 3, '.', ''), '0'), '.') ?: '0';
+        return rtrim(rtrim(number_format($value, 3, '/', ''), '0'), '/') ?: '0';
     }
 }

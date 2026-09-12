@@ -103,6 +103,26 @@ class ActivityLogTest extends TestCase
         $this->assertDatabaseHas('activity_logs', ['action' => ActivityLog::ACTION_ADJUST]);
     }
 
+    public function test_trade_summary_uses_slash_as_decimal_separator(): void
+    {
+        $product = Product::create(['name' => 'طلا', 'quantity' => 0, 'unit' => 'گرم']);
+
+        $this->actingAsSession($this->admin)
+            ->postJson("/api/products/{$product->id}/balance", [
+                'direction' => 'خرید',
+                'quantity' => 2.5,
+                'unit_price' => 100.25,
+                'trade_date' => '1405/06/01',
+                'settlement_date' => '1405/06/01',
+                'settlement_method' => 'کاغذ',
+            ])
+            ->assertStatus(201);
+
+        $log = ActivityLog::where('action', ActivityLog::ACTION_TRADE)->first();
+        $this->assertNotNull($log);
+        $this->assertSame('خرید 2/5 طلا به قیمت واحد 100/25 (ثبت در تراز)', $log->summary);
+    }
+
     public function test_person_and_user_actions_are_logged(): void
     {
         $this->actingAsSession($this->admin)
