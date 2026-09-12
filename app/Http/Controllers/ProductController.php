@@ -113,8 +113,8 @@ class ProductController extends Controller
     private function quantityRule(?string $unit): string
     {
         return $unit === 'عدد'
-            ? 'required|integer|min:-1000000000|max:1000000000'
-            : 'required|numeric|decimal:0,3|min:-1000000000|max:1000000000';
+            ? 'required|integer|min:'.-Product::MAX_QUANTITY.'|max:'.Product::MAX_QUANTITY
+            : 'required|numeric|decimal:0,3|min:'.-Product::MAX_QUANTITY.'|max:'.Product::MAX_QUANTITY;
     }
 
     /**

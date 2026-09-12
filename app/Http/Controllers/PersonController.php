@@ -81,7 +81,7 @@ class PersonController extends Controller
             'note' => 'nullable|string|max:200',
             'products' => 'nullable|array',
             'products.*.id' => 'required_with:products|integer|exists:products,id',
-            'products.*.quantity' => 'required_with:products|numeric|decimal:0,3|min:-1000000000|max:1000000000',
+            'products.*.quantity' => 'required_with:products|numeric|decimal:0,3|min:'.-Product::MAX_QUANTITY.'|max:'.Product::MAX_QUANTITY,
         ]);
 
         $result = DB::transaction(function () use ($data, $person) {
