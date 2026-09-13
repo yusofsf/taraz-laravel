@@ -85,7 +85,7 @@ const navCandidate = (el) => el instanceof HTMLElement
   && el.type !== 'radio'
   && el.type !== 'hidden'
   && el.getClientRects().length > 0
-  && !el.closest('aside, .rjd-root, .picker-menu')
+  && !el.closest('aside, header, .rjd-root, .picker-menu')
 
 // فلش افقی در ورودی متنی فقط وقتی caret در لبه متن است فیلد را عوض می‌کند؛
 // متن دارای حروف فارسی راست‌به‌چپ دیده می‌شود و بقیه چپ‌به‌راست
@@ -141,7 +141,7 @@ const handleArrowNav = (e) => {
   // وقتی تقویم شمسی یا منوی اشخاص باز است، فلش‌ها کار همان منو را می‌کنند
   if ([...document.querySelectorAll('.rjd-root, .picker-menu')].some((el) => el.getClientRects().length > 0)) return
   const from = e.target
-  if (!(from instanceof HTMLElement) || !from.matches(NAV_FIELDS) || from.closest('aside, .rjd-root, .picker-menu')) return
+  if (!(from instanceof HTMLElement) || !from.matches(NAV_FIELDS) || from.closest('aside, header, .rjd-root, .picker-menu')) return
   if (from.disabled || from.type === 'radio') return
 
   const horizontal = NAV_ARROWS[e.key][1] === 0
@@ -261,12 +261,14 @@ function App() {
         {nav.map((x) => (
           <button key={x} className={page === x ? 'active' : ''} onClick={() => { setPage(x); setMsg('') }}>{x}</button>
         ))}
-        <button onClick={() => api('/api/logout', { method: 'POST' }).then(load)}>خروج</button>
       </aside>
       <section>
         <header>
           <h2>{page}</h2>
-          <span>{user.name} · {fa(user.mobile)}</span>
+          <div className="user-info">
+            <span>{user.name} · {fa(user.mobile)}</span>
+            <button onClick={() => api('/api/logout', { method: 'POST' }).then(load)}>خروج</button>
+          </div>
         </header>
         <Msg x={msg} />
         {page === 'داشبورد' && <Dashboard user={user} />}
