@@ -245,6 +245,7 @@ function App() {
   const can = (perm) => user.is_admin || user[perm]
   const nav = ['داشبورد',
     'فاکتورهای امروز',
+    'معاملات آتی',
     ...(can('can_add_products') || can('can_change_balance') ? ['کالاها'] : []),
     ...(can('can_edit_products') ? ['ویرایش کالاها'] : []),
     'تاریخچه',
@@ -270,6 +271,7 @@ function App() {
         <Msg x={msg} />
         {page === 'داشبورد' && <Dashboard user={user} />}
         {page === 'فاکتورهای امروز' && <TodayInvoices />}
+        {page === 'معاملات آتی' && <FutureTrades user={user} ok={setMsg} />}
         {page === 'کالاها' && <Products user={user} ok={setMsg} />}
         {page === 'ویرایش کالاها' && <EditProducts user={user} ok={setMsg} />}
         {page === 'تاریخچه' && <History user={user} ok={setMsg} />}
@@ -631,7 +633,7 @@ function Products({ user, ok }) {
                     {' '}با تسویه {change.settlement_method === 'حواله' ? `حواله (${change.settlement_medium})` : change.settlement_method} مبلغ از محصول {change.settlement_method === 'کاغذ' ? 'کاغذ' : 'ریال'} کم/زیاد می‌شود؛ حواله بین دو شخص جابه‌جا می‌شود.
                   </>
                 )
-              : <>مبلغ کل: {fmt((+change.quantity || 0) * (+change.unit_price || 0))} · بدون «ثبت در تراز» فقط معامله ثبت می‌شود و تراز کالا و اشخاص تغییر نمی‌کند.</>}
+              : <>مبلغ کل: {fmt((+change.quantity || 0) * (+change.unit_price || 0))} · بدون «ثبت در تراز» معامله آتی ثبت می‌شود: موجودی کالا و تسویه تغییر نمی‌کند اما بدهکاری/بستانکاری طرف معامله ثبت می‌شود.</>}
           </small>
         </div>
       )}
@@ -778,6 +780,107 @@ function TodayInvoices() {
               </table>
             )
           : <div className="empty">امروز خرید و فروشی ثبت نشده است.</div>}
+      </div>
+    </>
+  )
+}
+
+// معامله‌های آتی: «ثبت در تراز» ندارند؛ موجودی کالا را تغییر نمی‌دهند اما
+// بدهکاری/بستانکاری طرفِ معامله را می‌سازند.
+function FutureTrades({ user, ok }) {
+  const [items, setItems] = useState([])
+  const [filters, setFilters] = useState({ from: '', to: '' })
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const canDelete = user.is_admin || user.can_delete_history
+
+  const load = () => {
+    if (busy) return
+    setBusy(true)
+    const query = new URLSearchParams()
+    if (filters.from) query.set('from', filters.from)
+    if (filters.to) query.set('to', filters.to)
+    api(`/api/trades/future?${query.toString()}`)
+      .then((list) => { setItems(Array.isArray(list) ? list : []); setError('') })
+      .catch((x) => { setItems([]); setError(x.message) })
+      .finally(() => setBusy(false))
+  }
+
+  useEffect(() => { load() }, [])
+
+  const applyFilters = (e) => {
+    e.preventDefault()
+    load()
+  }
+
+  const remove = (item) => {
+    if (!window.confirm('این معامله آتی حذف شود؟ بدهکاری/بستانکاری طرف معامله به حالت قبل برمی‌گردد.')) return
+    api(`/api/history/${item.id}`, { method: 'DELETE' })
+      .then(() => { ok('معامله آتی حذف شد.'); load() })
+      .catch((x) => setError(x.message))
+  }
+
+  // ویرایش معامله آتی از صفحه تاریخچه انجام می‌شود؛ همان‌جا مقدار و شخص قابل تغییر است
+  const buys = items.filter((x) => x.direction === 'خرید')
+  const sales = items.filter((x) => x.direction === 'فروش')
+  const buyValue = buys.reduce((sum, x) => sum + (+x.total_price || 0), 0)
+  const saleValue = sales.reduce((sum, x) => sum + (+x.total_price || 0), 0)
+
+  return (
+    <>
+      <Msg x={error} />
+      <div className="panel">
+        <div className="panel-title">
+          <span>معاملات آتی</span>
+          <small>معامله‌هایی بدون «ثبت در تراز»؛ موجودی کالا تغییر نمی‌کند اما بدهکاری/بستانکاری اشخاص ثبت می‌شود</small>
+        </div>
+        <form className="form range-form" onSubmit={applyFilters}>
+          <JalaliInput value={filters.from} onChange={(v) => setFilters({ ...filters, from: v })} placeholder="از تاریخ" />
+          <JalaliInput value={filters.to} onChange={(v) => setFilters({ ...filters, to: v })} placeholder="تا تاریخ" />
+          <button disabled={busy}>نمایش بازه</button>
+        </form>
+        {items.length
+          ? (
+              <table>
+                <thead>
+                  <tr>
+                    <th>تاریخ معامله</th><th>کالا</th><th>نوع</th><th>مقدار</th><th>قیمت واحد</th>
+                    <th>مبلغ کل</th><th>طرف معامله</th><th>کاربر</th><th>یادداشت</th>{canDelete && <th>عملیات</th>}
+                  </tr>
+                </thead>
+                <tbody>
+                  {items.map((item) => (
+                    <tr key={item.id}>
+                      <td>{fa(effectiveJalali(item))}</td>
+                      <td>{item.product?.name || '—'}</td>
+                      <td className={item.direction === 'خرید' ? 'up' : 'down'}>{item.direction || '—'}</td>
+                      <td>{fmt(item.change_amount)} {item.product?.unit || ''}</td>
+                      <td>{item.unit_price ? fmt(item.unit_price) : '—'}</td>
+                      <td>{item.total_price ? fmt(item.total_price) : '—'}</td>
+                      <td>
+                        {item.from_person && item.to_person
+                          ? `${item.from_person.name} → ${item.to_person.name}`
+                          : item.person?.name || item.from_person?.name || item.to_person?.name || '—'}
+                      </td>
+                      <td>{item.user?.name || '—'}</td>
+                      <td>{item.note || '—'}</td>
+                      {canDelete && (
+                        <td>
+                          <button type="button" className="ghost" onClick={() => remove(item)}>حذف</button>
+                        </td>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )
+          : <div className="empty">در این بازه معامله آتی ثبت نشده است.</div>}
+        {items.length > 0 && (
+          <small className="hint">
+            خرید: {fa(buys.length)} مورد ({fmt(buyValue)}) · فروش: {fa(sales.length)} مورد ({fmt(saleValue)})
+          </small>
+        )}
       </div>
     </>
   )

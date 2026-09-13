@@ -10,6 +10,7 @@ use App\Models\Product;
 use App\Models\User;
 use App\Support\ActivityLogger;
 use App\Support\Jalali;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -126,6 +127,10 @@ class ProductController extends Controller
      *    increases on a sale by quantity × unit price.
      *  - حواله: the value moves from one registered person to another on the
      *    chosen money product (from person decreases, to person increases).
+     *
+     * Without «ثبت در تراز» the trade is recorded as معامله آتی: inventory and
+     * settlement stay untouched, but the counterparty's debtor/creditor
+     * balance on the traded product is still applied.
      */
     public function changeBalance(Request $request, Product $product): JsonResponse
     {
@@ -172,15 +177,15 @@ class ProductController extends Controller
             $signed = $data['direction'] === 'خرید' ? $quantity : -$quantity;
             $inBalance = (bool) ($data['record_in_balance'] ?? true);
 
-            // وقتی «ثبت در تراز» تیک نخورده باشد فقط معامله ثبت می‌شود و تراز کالا/شخص دست‌نخورده می‌ماند
+            // معامله آتی: موجودی کالا و تسویه دست‌نخورده می‌مانند، اما بدهکاری/بستانکاری
+            // طرفِ معامله روی خود کالا اعمال می‌شود تا سهم او از معامله دیده شود
             $previous = $product->quantity;
             if ($inBalance) {
                 $product->increment('quantity', $signed);
                 $product->refresh();
-
-                if (! empty($data['person_id'])) {
-                    $this->adjustPersonBalance((int) $data['person_id'], $product->id, $signed);
-                }
+            }
+            if (! empty($data['person_id'])) {
+                $this->adjustPersonBalance((int) $data['person_id'], $product->id, $signed);
             }
 
             $trade = BalanceChange::create([
@@ -215,7 +220,7 @@ class ProductController extends Controller
                 self::trimZeros($quantity),
                 $product->name,
                 self::trimZeros($unitPrice),
-                $inBalance ? 'ثبت در تراز' : 'بدون ثبت در تراز',
+                $inBalance ? 'ثبت در تراز' : 'معامله آتی',
             ), [
                 'direction' => $data['direction'],
                 'quantity' => $quantity,
@@ -432,11 +437,14 @@ class ProductController extends Controller
      * Today's buy/sale invoices with unit price, settlement and aggregated
      * averages (prices and weights) for the day. Trades are listed by the
      * date the user entered for them, not the moment they got recorded.
+     * معامله‌های آتی تراز را تغییر نمی‌دهند و اینجا حساب نمی‌شوند؛ فهرستشان
+     * صفحه «معاملات آتی» است.
      */
     public function todayInvoices(): JsonResponse
     {
         $trades = BalanceChange::with(['product:id,name,unit', 'person:id,name', 'fromPerson:id,name', 'toPerson:id,name'])
             ->where('type', BalanceChange::TYPE_TRADE)
+            ->where('record_in_balance', true)
             ->whereRaw('coalesce(trade_date, date(created_at)) = ?', [today()->toDateString()])
             ->latest()
             ->get();
@@ -470,6 +478,50 @@ class ProductController extends Controller
         ]);
     }
 
+    /**
+     * معامله‌های آتی: معامله‌هایی که «ثبت در تراز» ندارند؛ موجودی کالا را تغییر
+     * نمی‌دهند اما بدهکاری/بستانکاری طرفِ معامله را می‌سازند.
+     */
+    public function futureTrades(Request $request): JsonResponse
+    {
+        $query = BalanceChange::with([
+            'product:id,name,unit', 'user:id,name', 'person:id,name',
+            'fromPerson:id,name', 'toPerson:id,name',
+        ])
+            ->where('type', BalanceChange::TYPE_TRADE)
+            ->where('record_in_balance', false)
+            ->latest();
+
+        if ($error = $this->applyEffectiveDateRange($request, $query)) {
+            return $error;
+        }
+
+        return response()->json($query->get());
+    }
+
+    /**
+     * فیلتر بازه تاریخ مؤثر (تاریخ معامله یا زمان ایجاد) را روی کوئری اعمال
+     * می‌کند؛ تاریخ نامعتبر پاسخ خطا برمی‌گرداند وگرنه null.
+     *
+     * @param  Builder<BalanceChange>  $query
+     */
+    private function applyEffectiveDateRange(Request $request, Builder $query): ?JsonResponse
+    {
+        foreach (['from' => '>=', 'to' => '<='] as $field => $operator) {
+            try {
+                $gregorian = Jalali::parseJalaliInput($request->input($field));
+            } catch (\InvalidArgumentException $exception) {
+                return response()->json(['message' => $exception->getMessage()], 422);
+            }
+            if ($gregorian !== null) {
+                // تاریخ مؤثر رکورد همان تاریخ معامله است؛ اگر ثبت نشده باشد زمان ایجاد رکورد می‌ماند
+                $query->whereRaw("coalesce(trade_date, date(created_at)) $operator ?", $gregorian);
+            }
+        }
+
+        return null;
+    }
+
     public function historyOptions(): JsonResponse
     {
         return response()->json([
@@ -485,16 +537,8 @@ class ProductController extends Controller
             'fromPerson:id,name', 'toPerson:id,name',
         ])->latest();
 
-        foreach (['from' => '>=', 'to' => '<='] as $field => $operator) {
-            try {
-                $gregorian = Jalali::parseJalaliInput($request->input($field));
-            } catch (\InvalidArgumentException $exception) {
-                return response()->json(['message' => $exception->getMessage()], 422);
-            }
-            if ($gregorian !== null) {
-                // تاریخ مؤثر رکورد همان تاریخ معامله است؛ اگر ثبت نشده باشد زمان ایجاد رکورد می‌ماند
-                $query->whereRaw("coalesce(trade_date, date(created_at)) $operator ?", $gregorian);
-            }
+        if ($error = $this->applyEffectiveDateRange($request, $query)) {
+            return $error;
         }
 
         if ($request->filled('user_id')) {
@@ -541,25 +585,24 @@ class ProductController extends Controller
                 : $oldUnitPrice;
 
             if ($wasInBalance && ! $inBalance) {
-                // تیک برداشته شد: اثر قبلی روی تراز کالا، شخص و تسویه برمی‌گردد
+                // تیک برداشته شد: معامله آتی می‌شود؛ اثر تراز کالا و تسویه برمی‌گردد
+                // اما بدهکاری/بستانکاری شخص سرِ جایش می‌ماند
                 if ($change->type === BalanceChange::TYPE_TRADE) {
                     $this->reverseTradeSettlement($change);
                 }
                 $product->decrement('quantity', $change->change_amount);
-                if ($change->person_id) {
-                    $this->adjustPersonBalance($change->person_id, $product->id, -$change->change_amount);
-                }
                 BalanceChange::where('parent_id', $change->id)->delete();
             } elseif (! $wasInBalance && $inBalance) {
-                // تیک گذاشته شد: اثر روی تراز کالا و شخص اعمال می‌شود
+                // تیک گذاشته شد: معامله آتی به تراز می‌رود؛ موجودی کالا و تسویه اعمال
+                // می‌شود؛ بدهکاری/بستانکاری شخص از قبل اعمال شده و دوباره اعمال نمی‌شود
                 $product->increment('quantity', $newAmount);
-                if ($newPersonId !== null) {
-                    $this->adjustPersonBalance((int) $newPersonId, $product->id, $newAmount);
-                }
             } elseif ($inBalance) {
                 $product->increment('quantity', $newAmount - $change->change_amount);
-                $this->movePersonBalance($change, $newAmount, $newPersonId);
             }
+
+            // در هر حالت بدهکاری/بستانکاری شخص با مقدار تازه هم‌گام می‌شود؛ سهم
+            // شخص از معامله آتی هم همین‌جا حفظ یا جابه‌جا می‌شود
+            $this->movePersonBalance($change, $newAmount, $newPersonId);
 
             $change->update([
                 'person_id' => $newPersonId,
@@ -582,7 +625,7 @@ class ProductController extends Controller
                 } elseif ($inBalance) {
                     $this->syncTradeSettlement($change, $newAmount, $newUnitPrice);
                 } else {
-                    // معامله خارج از تراز رکورد تسویه ندارد؛ فقط قیمت کل خود رکورد به‌روز می‌شود
+                    // معامله آتی رکورد تسویه ندارد؛ فقط قیمت کل خود رکورد به‌روز می‌شود
                     $change->update(['total_price' => round($newAmount * $newUnitPrice, 2)]);
                 }
             }
@@ -599,7 +642,7 @@ class ProductController extends Controller
                 self::trimZeros($oldAmount),
                 self::trimZeros($newAmount),
                 $priceChange,
-                $wasInBalance !== $inBalance ? '، '.($inBalance ? 'ثبت در تراز شد' : 'از تراز خارج شد') : '',
+                $wasInBalance !== $inBalance ? '، '.($inBalance ? 'ثبت در تراز شد' : 'معامله آتی شد') : '',
             ), [
                 'change_id' => $change->id,
                 'old_amount' => $oldAmount,
@@ -676,17 +719,18 @@ class ProductController extends Controller
         $changeId = $change->id;
 
         DB::transaction(function () use ($change, $product) {
-            // رکوردهای بدون «ثبت در تراز» هیچ اثری روی تراز ندارند؛ فقط خودشان حذف می‌شوند
+            // معامله آتی موجودی و تسویه را تغییر نداده؛ فقط بدهکاری/بستانکاری
+            // شخص خودش برمی‌گردد. رکوردهای «ثبت در تراز» اثر تراز و تسویه هم دارند.
             if ($change->record_in_balance) {
                 if ($change->type === BalanceChange::TYPE_TRADE) {
                     $this->reverseTradeSettlement($change);
                 }
 
                 $product->decrement('quantity', $change->change_amount);
+            }
 
-                if ($change->person_id) {
-                    $this->adjustPersonBalance($change->person_id, $product->id, -$change->change_amount);
-                }
+            if ($change->person_id) {
+                $this->adjustPersonBalance($change->person_id, $product->id, -$change->change_amount);
             }
 
             BalanceChange::where('parent_id', $change->id)->delete();

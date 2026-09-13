@@ -268,7 +268,7 @@ class TradeSettlementTest extends TestCase
         $this->assertEquals(1.0, $stats['balance']);
     }
 
-    public function test_trade_without_record_in_balance_does_not_touch_balances(): void
+    public function test_future_trade_updates_person_balance_but_not_inventory(): void
     {
         $this->actingAsSession($this->admin)
             ->postJson('/api/products/'.$this->gold->id.'/balance', [
@@ -285,19 +285,23 @@ class TradeSettlementTest extends TestCase
 
         $trade = BalanceChange::where('type', 'trade')->first();
 
+        // معامله آتی: موجودی کالا و کالای پولی تغییر نمی‌کند
         $this->assertSame(0.0, (float) $this->gold->fresh()->quantity);
         $this->assertSame(0.0, (float) Product::where('name', 'کاغذ')->value('quantity'));
-        $this->assertFalse((bool) PersonProduct::where('person_id', $this->ali->id)->count());
         $this->assertFalse((bool) $trade->record_in_balance);
         $this->assertEquals(2.0, (float) $trade->change_amount);
         $this->assertSame(0, BalanceChange::where('type', 'settlement')->count());
 
-        // حذفش هم تراز را تغییر نمی‌دهد
+        // اما بدهکاری/بستانکاری طرف معامله ثبت می‌شود
+        $this->assertSame(2.0, (float) PersonProduct::where('person_id', $this->ali->id)->where('product_id', $this->gold->id)->value('quantity'));
+
+        // حذفش هم موجودی را تغییر نمی‌دهد و بدهکاری را برمی‌گرداند
         $this->actingAsSession($this->admin)
             ->deleteJson('/api/history/'.$trade->id)
             ->assertStatus(204);
 
         $this->assertSame(0.0, (float) $this->gold->fresh()->quantity);
+        $this->assertSame(0.0, (float) PersonProduct::where('person_id', $this->ali->id)->where('product_id', $this->gold->id)->value('quantity'));
     }
 
     public function test_settlement_date_is_required(): void
@@ -393,7 +397,10 @@ class TradeSettlementTest extends TestCase
 
         $trade = BalanceChange::where('type', 'trade')->first();
 
-        // تیک را می‌گذاریم: تراز کالا، شخص و تسویه باید اعمال شود
+        // معامله از ابتدا آتی است؛ بدهکاری شخص از همان ثبت اعمال شده است
+        $this->assertSame(2.0, (float) PersonProduct::where('person_id', $this->ali->id)->where('product_id', $this->gold->id)->value('quantity'));
+
+        // تیک را می‌گذاریم: موجودی کالا و تسویه اعمال می‌شود؛ بدهکاری شخص دوباره اعمال نمی‌شود
         $this->actingAsSession($this->admin)
             ->putJson('/api/history/'.$trade->id, [
                 'amount' => 2,
@@ -411,7 +418,7 @@ class TradeSettlementTest extends TestCase
         $this->assertSame(2.0, (float) PersonProduct::where('person_id', $this->ali->id)->where('product_id', $this->gold->id)->value('quantity'));
         $this->assertSame(1, BalanceChange::where('type', 'settlement')->count());
 
-        // تیک را برمی‌داریم: همه اثرها باید برگردد
+        // تیک را برمی‌داریم: موجودی و تسویه برمی‌گردد؛ بدهکاری شخص سرِ جایش می‌ماند
         $this->actingAsSession($this->admin)
             ->putJson('/api/history/'.$trade->id, [
                 'amount' => 2,
@@ -425,7 +432,7 @@ class TradeSettlementTest extends TestCase
         $this->assertFalse((bool) $trade->record_in_balance);
         $this->assertSame(0.0, (float) $this->gold->fresh()->quantity);
         $this->assertSame(0.0, (float) $paper->fresh()->quantity);
-        $this->assertSame(0.0, (float) PersonProduct::where('person_id', $this->ali->id)->where('product_id', $this->gold->id)->value('quantity'));
+        $this->assertSame(2.0, (float) PersonProduct::where('person_id', $this->ali->id)->where('product_id', $this->gold->id)->value('quantity'));
         $this->assertSame(0, BalanceChange::where('type', 'settlement')->count());
     }
 
@@ -508,7 +515,7 @@ class TradeSettlementTest extends TestCase
         $this->assertSame(1400.0, (float) $trade->fresh()->total_price);
     }
 
-    public function test_editing_unit_price_of_trade_outside_balance_updates_total_only(): void
+    public function test_editing_unit_price_of_future_trade_updates_total_only(): void
     {
         $this->actingAsSession($this->admin)
             ->postJson('/api/products/'.$this->gold->id.'/balance', [
@@ -519,20 +526,23 @@ class TradeSettlementTest extends TestCase
                 'trade_date' => '1405/06/01',
                 'settlement_method' => 'کاغذ',
                 'settlement_date' => '1405/06/01',
+                'person_id' => $this->ali->id,
             ])
             ->assertStatus(201);
 
         $trade = BalanceChange::where('type', 'trade')->first();
 
         $this->actingAsSession($this->admin)
-            ->putJson('/api/history/'.$trade->id, ['amount' => 2, 'unit_price' => 2500, 'record_in_balance' => false])
+            ->putJson('/api/history/'.$trade->id, ['amount' => 2, 'unit_price' => 2500, 'record_in_balance' => false, 'person_id' => $this->ali->id])
             ->assertStatus(200);
 
-        // خارج از تراز: هیچ ترازی تغییر نمی‌کند؛ فقط قیمت کل رکورد به‌روز می‌شود
+        // معامله آتی: موجودی و تسویه تغییر نمی‌کند؛ فقط قیمت کل رکورد به‌روز می‌شود
+        // اما بدهکاری شخص همان‌طور که بوده نگه داشته می‌شود
         $this->assertSame(0.0, (float) $this->gold->fresh()->quantity);
         $this->assertSame(0.0, (float) Product::where('name', 'کاغذ')->value('quantity'));
         $this->assertSame(5000.0, (float) $trade->fresh()->total_price);
         $this->assertSame(0, BalanceChange::where('type', 'settlement')->count());
+        $this->assertSame(2.0, (float) PersonProduct::where('person_id', $this->ali->id)->where('product_id', $this->gold->id)->value('quantity'));
     }
 
     public function test_editing_adjust_record_ignores_unit_price(): void
