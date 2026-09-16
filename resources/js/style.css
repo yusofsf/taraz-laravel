@@ -44,3 +44,11 @@ button.ghost{background:#eef2f7;color:#53617a}
 .detail-panel{padding:26px 30px}
 .detail-panel h3{margin:0 0 19px}
 .detail-panel table{margin-top:16px}
+.cards.duo{grid-template-columns:1fr 1fr}
+.balance-breakdown{list-style:none;margin:12px 0 0;padding:0;display:flex;flex-direction:column;gap:8px;max-height:220px;overflow:auto}
+.balance-breakdown li{display:flex;justify-content:space-between;align-items:center;gap:10px;font-size:13px;border-top:1px dashed #eef2f7;padding-top:8px}
+.balance-breakdown li:first-child{border-top:0;padding-top:0}
+.balance-breakdown li em{font-style:normal;font-weight:600}
+.balance-breakdown li.debtor em{color:#b3402f}
+.balance-breakdown li.creditor em{color:#087e6d}
+@media(max-width:550px){.cards.duo{grid-template-columns:1fr}}

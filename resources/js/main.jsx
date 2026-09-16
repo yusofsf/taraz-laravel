@@ -464,6 +464,29 @@ function Dashboard({ user }) {
         {[['تعداد کالاها', data.products?.length], ['تغییرات امروز', data.changes_today], ['کاربران', data.users]]
           .map(([name, value]) => <article key={name}><small>{name}</small><b>{fa(value || 0)}</b></article>)}
       </div>
+      {/* جمع کل بین کالاها نمایش داده نمی‌شود چون واحدها متفاوت‌اند (گرم/عدد/مثقال/انس) و جمعشان بی‌معنا است */}
+      <div className="cards duo">
+        {[['بدهکاری', 'debtor'], ['بستانکاری', 'creditor']].map(([title, key]) => {
+          const rows = (data.person_balances || []).filter((item) => item[key] > 0)
+          return (
+            <article key={key}>
+              <small>{title} اشخاص</small>
+              {rows.length
+                ? (
+                    <ul className="balance-breakdown">
+                      {rows.map((item) => (
+                        <li key={item.id} className={key}>
+                          <span>{item.name}</span>
+                          <em>{fmt(item[key])} {item.unit || 'عدد'}</em>
+                        </li>
+                      ))}
+                    </ul>
+                  )
+                : <small className="hint">موردی ثبت نشده است.</small>}
+            </article>
+          )
+        })}
+      </div>
       <div className="panel">
         <div className="panel-title">
           <span>تراز کالاها</span>

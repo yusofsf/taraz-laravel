@@ -832,7 +832,39 @@ class ProductController extends Controller
             'changes_today' => BalanceChange::whereRaw('coalesce(trade_date, date(created_at)) = ?', [today()->toDateString()])->count(),
             'users' => User::count(),
             'today_jalali' => Jalali::formatLong(today()),
+            'person_balances' => $this->personBalanceSummary(),
         ];
+    }
+
+    /**
+     * جمع بدهکاری/بستانکاری اشخاص به تفکیک کالا؛ فقط کالاهایی که مقدار غیرصفر دارند.
+     * مثبت یعنی شخص بدهکار، منفی یعنی طلبکار (قرارداد person_product).
+     *
+     * @return array<int, array{id: int, name: string, unit: string, debtor: float, creditor: float}>
+     */
+    private function personBalanceSummary(): array
+    {
+        return PersonProduct::query()
+            ->join('products', 'products.id', '=', 'person_product.product_id')
+            ->groupBy('products.id', 'products.name', 'products.unit')
+            ->orderBy('products.name')
+            ->get([
+                'products.id as id',
+                'products.name as name',
+                'products.unit as unit',
+                DB::raw('sum(case when person_product.quantity > 0 then person_product.quantity else 0 end) as debtor'),
+                DB::raw('sum(case when person_product.quantity < 0 then -person_product.quantity else 0 end) as creditor'),
+            ])
+            ->map(fn ($row) => [
+                'id' => (int) $row->id,
+                'name' => $row->name,
+                'unit' => $row->unit,
+                'debtor' => (float) $row->debtor,
+                'creditor' => (float) $row->creditor,
+            ])
+            ->filter(fn (array $row) => $row['debtor'] > 0 || $row['creditor'] > 0)
+            ->values()
+            ->all();
     }
 
     /**
