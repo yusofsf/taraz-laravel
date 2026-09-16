@@ -62,15 +62,108 @@ const api = async (url, opt = {}) => {
 const Msg = ({ x }) => x && <p className="msg">{x}</p>
 
 // نمایش همه اعداد سایت با ارقام فارسی (ورودی فرم‌ها لاتین می‌ماند)؛ ممیز اعشار به‌جای نقطه، «/» است
-const fa = (x) => String(x ?? '').replace(/[0-9.]/g, (c) => (c === '.' ? '/' : '۰۱۲۳۴۵۶۷۸۹'[c]))
+// جداکنندهٔ هزارگان فارسی؛ فقط بخش صحیحِ عدد را سه‌رقم از راست جدا می‌کند
+const groupFa = (s) => String(s ?? '').replace(/(^[+-]?\d+)(?=(\.|$))/, (_, int) => {
+  const sign = /^[+-]/.test(int) ? int[0] : ''
+  const digits = sign ? int.slice(1) : int
+  if (digits.length <= 3) return int
+  return sign + digits.replace(/\B(?=(\d{3})+$)/g, '٬')
+})
+
+// ارقام فارسی + جداکنندهٔ هزارگان؛ بخش‌های تاریخ/ساعت (مثل ۱۴۰۵/۰۶/۰۱ و ۱۴:۳۰) جدا نمی‌شوند
+const fa = (x) => String(x ?? '')
+  .replace(/[0-9]+/g, (run, offset, str) => {
+    if (run.length <= 3) return run
+    const before = str[offset - 1]
+    const after = str[offset + run.length]
+    if (before === '/' || after === '/' || before === ':' || after === ':') return run
+    return groupFa(run)
+  })
+  .replace(/[0-9.]/g, (c) => (c === '.' ? '/' : '۰۱۲۳۴۵۶۷۸۹'[c]))
 
 // IP نقطه‌های جداکننده دارد که ممیز اعشار نیست؛ فقط ارقام آن فارسی می‌شود
 const faIp = (x) => String(x ?? '').replace(/[0-9]/g, (c) => '۰۱۲۳۴۵۶۷۸۹'[c])
 
-// متن آزاد مثل شرح لاگ: فقط نقطهٔ میان دو رقم ممیز است؛ نقطهٔ نام‌ها دست‌نخورده می‌ماند
-const faText = (x) => String(x ?? '').replace(/([0-9])\.([0-9])/g, '$1/$2').replace(/[0-9]/g, (c) => '۰۱۲۳۴۵۶۷۸۹'[c])
+// ارقام لاتین به فارسی، بدون تغییر دیگر
+const faDigits = (s) => String(s ?? '').replace(/[0-9]/g, (c) => '۰۱۲۳۴۵۶۷۸۹'[c])
+
+// تبدیل سادهٔ ارقام به فارسی بدون جداکنندهٔ هزارگان؛ برای تاریخ‌ها (مثل «پنجشنبه ۱۵ شهریور ۱۴۰۵»)
+const faPlain = (x) => String(x ?? '').replace(/[0-9.]/g, (c) => (c === '.' ? '/' : '۰۱۲۳۴۵۶۷۸۹'[c]))
+
+// متن آزاد مثل شرح لاگ: نقطهٔ میان دو رقم ممیز است؛ نقطهٔ نام‌ها دست‌نخورده می‌ماند.
+// اعداد بیش از سه رقم سه‌رقم جدا می‌شوند، اما تاریخ/ساعت (۱۴۰۵/۰۶/۰۱، ۱۴:۳۰ و تاریخ میلادی
+// جزئیات لاگ مثل 2026-09-15 یا 2026-09-15T10:20:30.000000Z) دست‌نخورده می‌مانند
+const faText = (x) => String(x ?? '')
+  // نقطهٔ کسر ثانیه در مهرزمان (مثل 10:20:30.000000) ممیز نیست و دست‌نخورده می‌ماند
+  .replace(/(\d)\.(\d)/g, (m, a, b, offset, str) => (/\d{2}:\d{2}:\d{2}$/.test(str.slice(0, offset) + a) ? m : `${a}/${b}`))
+  .replace(
+    /(\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?)?)|(\d{4}\/\d{1,2}\/\d{1,2}(?:\s+\d{1,2}:\d{2}(?::\d{2})?)?)|(\d{1,2}:\d{2}(?::\d{2}(?:\.\d+)?)?)|(\d+(?:\/\d+)?)/g,
+    (token, iso, jalali, time) => {
+      if (iso || jalali || time) return faDigits(token)
+      const [int, frac] = token.split('/')
+      const grouped = int.length > 3 ? groupFa(int) : int
+      return faDigits(grouped) + (frac === undefined ? '' : `/${faDigits(frac)}`)
+    })
 
 const fmt = (x) => fa(+(+x).toFixed(3))
+
+// تبدیل ورودی متنی اعداد (با ممیز «/») به عدد؛ مقدار نامعتبر صفر می‌شود تا NaN ارسال نشود
+const toNum = (s) => {
+  const n = +String(s ?? '').replace('/', '.')
+  return Number.isFinite(n) ? n : 0
+}
+
+// پالایش ورودی عددی: فقط رقم، یک ممیز («/» یا «.») و منفیِ ابتدایی مجاز است
+const sanitizeDecimal = (s) => {
+  let out = ''
+  let hasSep = false
+  for (const ch of String(s ?? '')) {
+    if (ch === '-') {
+      if (out === '') out += ch
+    } else if (ch === '/' || ch === '.') {
+      if (!hasSep) { out += '/'; hasSep = true }
+    } else if (ch >= '0' && ch <= '9') {
+      out += ch
+    }
+  }
+  return out
+}
+
+// مقدار نمایشی ورودی: عددهای اولیهٔ فرم هم با ممیز «/» نشان داده می‌شوند
+const shownDecimal = (v) => String(v ?? '').replace('.', '/')
+
+// ورودی عددی با ممیز «/»؛ دکمهٔ اعشار صفحه‌کلید عددی هم «/» درج می‌کند
+function DecimalInput({ value, onChange, onKeyDown, ...props }) {
+  const shown = shownDecimal(value)
+
+  const insertSlash = (el) => {
+    const start = el.selectionStart ?? el.value.length
+    const end = el.selectionEnd ?? el.value.length
+    onChange(sanitizeDecimal(el.value.slice(0, start) + '/' + el.value.slice(end)))
+    setTimeout(() => el.setSelectionRange(start + 1, start + 1), 0)
+  }
+
+  const handleKeyDown = (e) => {
+    if ((e.code === 'NumpadDecimal' || e.code === 'NumpadSeparator') && e.key !== '/') {
+      e.preventDefault()
+      if (!shown.includes('/')) insertSlash(e.target)
+    }
+    onKeyDown?.(e)
+  }
+
+  return (
+    <input
+      {...props}
+      type="text"
+      inputMode="decimal"
+      dir="ltr"
+      autoComplete="off"
+      value={shown}
+      onChange={(e) => onChange(sanitizeDecimal(e.target.value))}
+      onKeyDown={handleKeyDown}
+    />
+  )
+}
 
 // --- جابه‌جایی بین فیلدهای فرم با کلیدهای جهت (مشابه اکسل) ---
 // نزدیک‌ترین فیلدِ هم‌ردیف/هم‌ستون در جهت فلش پیدا و فوکوس می‌شود؛
@@ -221,8 +314,8 @@ function BalanceLineChart({ items, granularity = 'day' }) {
       <ResponsiveContainer width="100%" height="100%">
         <LineChart data={data} margin={{ top: 12, right: 24, bottom: 4, left: 4 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="#e8edf4" />
-          <XAxis dataKey="name" tick={{ fontSize: 11 }} tickFormatter={fa} />
-          <YAxis tick={{ fontSize: 11 }} width={48} orientation="right" tickFormatter={fa} />
+          <XAxis dataKey="name" tick={{ fontSize: 11 }} tickFormatter={faPlain} />
+          <YAxis tick={{ fontSize: 11 }} width={48} orientation="right" tickFormatter={fmt} />
           <Tooltip formatter={(value) => [fa(value), 'تغییر']} />
           <Line type="monotone" dataKey="change" name="تغییر" stroke="#0da38c" strokeWidth={2} dot={{ r: 3 }} />
         </LineChart>
@@ -374,7 +467,7 @@ function Dashboard({ user }) {
       <div className="panel">
         <div className="panel-title">
           <span>تراز کالاها</span>
-          <small>{data.today_jalali ? `امروز: ${fa(data.today_jalali)}` : 'برای جزئیات روی کالا کلیک کنید'}</small>
+          <small>{data.today_jalali ? `امروز: ${faPlain(data.today_jalali)}` : 'برای جزئیات روی کالا کلیک کنید'}</small>
         </div>
         <div className="product-balance">
           {(data.products || []).map((item) => (
@@ -422,7 +515,7 @@ function Dashboard({ user }) {
             <button>نمایش بازه</button>
           </form>
           <small className="hint">
-            تراز از اول دوره ({fa(fiscalFrom)}): {fmt(history.filter((item) => item.record_in_balance !== false).reduce((sum, item) => sum + (+item.change_amount || 0), 0))} {selected.unit || 'عدد'}
+            تراز از اول دوره ({faPlain(fiscalFrom)}): {fmt(history.filter((item) => item.record_in_balance !== false).reduce((sum, item) => sum + (+item.change_amount || 0), 0))} {selected.unit || 'عدد'}
           </small>
           <ProductBalanceCharts history={history} unit={selected.unit} />
           <table>
@@ -433,7 +526,7 @@ function Dashboard({ user }) {
                 for (let i = 0; i <= index; i++) if (all[i].record_in_balance !== false) running += +all[i].change_amount || 0
                 return (
                   <tr key={item.id}>
-                    <td>{fa(effectiveJalali(item))}</td>
+                    <td>{faPlain(effectiveJalali(item))}</td>
                     <td>{item.person?.name || '—'}</td>
                     <td>{item.user?.name}</td>
                     <td>{fmt(item.change_amount)}</td>
@@ -581,10 +674,10 @@ function Products({ user, ok }) {
       {canAdd && (
         <div className="panel">
           <h3>افزودن کالا</h3>
-          <form className="form" onSubmit={(x) => post(x, '/api/products', form, () => setForm(EMPTY_PRODUCT))}>
+          <form className="form" onSubmit={(x) => post(x, '/api/products', { ...form, quantity: toNum(form.quantity) }, () => setForm(EMPTY_PRODUCT))}>
             <input required placeholder="نام کالا" value={form.name} onChange={(x) => setForm({ ...form, name: x.target.value })} />
             <input placeholder="کد کالا" value={form.sku} onChange={(x) => setForm({ ...form, sku: x.target.value })} />
-            <input type="number" value={form.quantity} step="any" onChange={(x) => setForm({ ...form, quantity: +x.target.value })} />
+            <DecimalInput value={String(form.quantity ?? '')} onChange={(v) => setForm({ ...form, quantity: v })} />
             <select value={form.unit} onChange={(x) => setForm({ ...form, unit: x.target.value })}>
               {UNITS.map((u) => <option key={u}>{u}</option>)}
             </select>
@@ -595,7 +688,7 @@ function Products({ user, ok }) {
       {canChange && (
         <div className="panel">
           <h3>خرید و فروش (تغییر تراز کالا)</h3>
-          <form className="form" onSubmit={(x) => post(x, `/api/products/${change.product_id}/balance`, change, () => setChange(EMPTY_CHANGE))}>
+          <form className="form" onSubmit={(x) => post(x, `/api/products/${change.product_id}/balance`, { ...change, quantity: toNum(change.quantity), unit_price: toNum(change.unit_price) }, () => setChange(EMPTY_CHANGE))}>
             <select required value={change.product_id} onChange={(x) => setChange({ ...change, product_id: x.target.value })}>
               <option value="">کالا را انتخاب کنید</option>
               {products.map((item) => <option key={item.id} value={item.id}>{item.name} ({fmt(item.quantity)} {item.unit || 'عدد'})</option>)}
@@ -606,8 +699,8 @@ function Products({ user, ok }) {
             <label className="check">
               <input type="checkbox" checked={change.record_in_balance} onChange={(x) => setChange({ ...change, record_in_balance: x.target.checked })} />ثبت در تراز
             </label>
-            <input required type="number" step="any" placeholder={`مقدار (${change.direction === 'خرید' ? 'ورود کالا' : 'خروج کالا'})`} value={change.quantity} onChange={(x) => setChange({ ...change, quantity: x.target.value })} />
-            <input required type="number" step="any" placeholder="قیمت هر واحد/گرم" value={change.unit_price} onChange={(x) => setChange({ ...change, unit_price: x.target.value })} />
+            <DecimalInput required placeholder={`مقدار (${change.direction === 'خرید' ? 'ورود کالا' : 'خروج کالا'})`} value={change.quantity} onChange={(v) => setChange({ ...change, quantity: v })} />
+            <DecimalInput required placeholder="قیمت هر واحد/گرم" value={change.unit_price} onChange={(v) => setChange({ ...change, unit_price: v })} />
             <select value={change.settlement_method} onChange={(x) => setChange({ ...change, settlement_method: x.target.value })}>
               {SETTLEMENT_METHODS.map((m) => <option key={m}>{m}</option>)}
             </select>
@@ -631,11 +724,11 @@ function Products({ user, ok }) {
             {change.record_in_balance
               ? (
                   <>
-                    مبلغ کل: {fmt((+change.quantity || 0) * (+change.unit_price || 0))} ·
+                    مبلغ کل: {fmt(toNum(change.quantity) * toNum(change.unit_price))} ·
                     {' '}با تسویه {change.settlement_method === 'حواله' ? `حواله (${change.settlement_medium})` : change.settlement_method} مبلغ از محصول {change.settlement_method === 'کاغذ' ? 'کاغذ' : 'ریال'} کم/زیاد می‌شود؛ حواله بین دو شخص جابه‌جا می‌شود.
                   </>
                 )
-              : <>مبلغ کل: {fmt((+change.quantity || 0) * (+change.unit_price || 0))} · بدون «ثبت در تراز» معامله آتی ثبت می‌شود: موجودی کالا و تسویه تغییر نمی‌کند اما بدهکاری/بستانکاری طرف معامله ثبت می‌شود.</>}
+              : <>مبلغ کل: {fmt(toNum(change.quantity) * toNum(change.unit_price))} · بدون «ثبت در تراز» معامله آتی ثبت می‌شود: موجودی کالا و تسویه تغییر نمی‌کند اما بدهکاری/بستانکاری طرف معامله ثبت می‌شود.</>}
           </small>
         </div>
       )}
@@ -698,8 +791,8 @@ function ProductBalanceCharts({ history, unit }) {
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e8edf4" vertical={false} />
-                <XAxis dataKey="name" tick={{ fontSize: 10, fill: '#73809a' }} tickFormatter={fa} tickLine={false} axisLine={{ stroke: '#e8edf4' }} />
-                <YAxis tick={{ fontSize: 11, fill: '#73809a' }} tickFormatter={fa} tickLine={false} axisLine={false} width={52} orientation="right" />
+                <XAxis dataKey="name" tick={{ fontSize: 10, fill: '#73809a' }} tickFormatter={faPlain} tickLine={false} axisLine={{ stroke: '#e8edf4' }} />
+                <YAxis tick={{ fontSize: 11, fill: '#73809a' }} tickFormatter={fmt} tickLine={false} axisLine={false} width={52} orientation="right" />
                 <Tooltip content={tooltip(unit)} />
                 <Area type="monotone" dataKey="مقدار" stroke={color} strokeWidth={2.5} fill={`url(#${id})`} dot={{ r: 3.5, fill: color, strokeWidth: 0 }} activeDot={{ r: 5.5, strokeWidth: 2, stroke: '#fff' }} />
               </AreaChart>
@@ -749,7 +842,7 @@ function TodayInvoices() {
       <div className="panel">
         <div className="panel-title">
           <span>فاکتورهای امروز</span>
-          <small>{fa(data.today_jalali)} · خرید: {fa(stats.buy_count || 0)} · فروش: {fa(stats.sale_count || 0)}</small>
+          <small>{faPlain(data.today_jalali)} · خرید: {fa(stats.buy_count || 0)} · فروش: {fa(stats.sale_count || 0)}</small>
         </div>
         {data.invoices?.length
           ? (
@@ -763,14 +856,14 @@ function TodayInvoices() {
                 <tbody>
                   {data.invoices.map((item) => (
                     <tr key={item.id}>
-                      <td>{fa(effectiveJalali(item))}</td>
+                      <td>{faPlain(effectiveJalali(item))}</td>
                       <td>{item.product?.name || '—'}</td>
                       <td className={item.direction === 'خرید' ? 'up' : 'down'}>{item.direction || 'تعدیل'}</td>
                       <td>{fmt(item.change_amount)} {item.product?.unit || ''}</td>
                       <td>{item.unit_price ? fmt(item.unit_price) : '—'}</td>
                       <td>{item.total_price ? fmt(item.total_price) : '—'}</td>
                       <td>{item.settlement_method || '—'}</td>
-                      <td>{fa(item.settlement_date_jalali || '—')}</td>
+                      <td>{faPlain(item.settlement_date_jalali || '—')}</td>
                       <td>
                         {item.from_person && item.to_person
                           ? `${item.from_person.name} → ${item.to_person.name}`
@@ -854,7 +947,7 @@ function FutureTrades({ user, ok }) {
                 <tbody>
                   {items.map((item) => (
                     <tr key={item.id}>
-                      <td>{fa(effectiveJalali(item))}</td>
+                      <td>{faPlain(effectiveJalali(item))}</td>
                       <td>{item.product?.name || '—'}</td>
                       <td className={item.direction === 'خرید' ? 'up' : 'down'}>{item.direction || '—'}</td>
                       <td>{fmt(item.change_amount)} {item.product?.unit || ''}</td>
@@ -910,7 +1003,7 @@ function EditProducts({ user, ok }) {
     e.preventDefault()
     if (busy) return
     setBusy(true)
-    api(`/api/products/${editing.id}`, { method: 'PUT', body: editing })
+    api(`/api/products/${editing.id}`, { method: 'PUT', body: { ...editing, quantity: toNum(editing.quantity) } })
       .then(() => { setEditing(null); load(); ok('کالا ویرایش شد.') })
       .catch((z) => setError(z.message))
       .finally(() => setBusy(false))
@@ -935,7 +1028,7 @@ function EditProducts({ user, ok }) {
                         <form className="form" onSubmit={save}>
                           <input required value={editing.name} onChange={(e) => setEditing({ ...editing, name: e.target.value })} />
                           <input placeholder="کد کالا" value={editing.sku || ''} onChange={(e) => setEditing({ ...editing, sku: e.target.value })} />
-                          <input type="number" value={editing.quantity} step="any" onChange={(e) => setEditing({ ...editing, quantity: +e.target.value })} />
+                          <DecimalInput value={String(editing.quantity ?? '')} onChange={(v) => setEditing({ ...editing, quantity: v })} />
                           <select value={editing.unit} onChange={(e) => setEditing({ ...editing, unit: e.target.value })}>
                             {UNITS.map((u) => <option key={u}>{u}</option>)}
                           </select>
@@ -1043,8 +1136,8 @@ function History({ user, ok }) {
     e.preventDefault()
     if (busy) return
     setBusy(true)
-    const body = { amount: +editing.change_amount, note: editing.note, person_id: editing.person_id || null, record_in_balance: !!editing.record_in_balance }
-    if (editing.type === 'trade') body.unit_price = +editing.unit_price
+    const body = { amount: toNum(editing.change_amount), note: editing.note, person_id: editing.person_id || null, record_in_balance: !!editing.record_in_balance }
+    if (editing.type === 'trade') body.unit_price = toNum(editing.unit_price)
     api(`/api/history/${editing.id}`, { method: 'PUT', body })
       .then(() => { setEditing(null); ok('رکورد ویرایش شد.'); load(); loadChart() })
       .catch((x) => setError(x.message))
@@ -1084,15 +1177,13 @@ function History({ user, ok }) {
                     <tr key={item.id}>
                       <td colSpan={canEdit || canDelete ? 6 : 5}>
                         <form className="form" onSubmit={saveEdit}>
-                          <input required type="number" step="any" value={editing.change_amount} onChange={(e) => setEditing({ ...editing, change_amount: e.target.value })} />
+                          <DecimalInput required value={String(editing.change_amount ?? '')} onChange={(v) => setEditing({ ...editing, change_amount: v })} />
                           {editing.type === 'trade' && (
-                            <input
+                            <DecimalInput
                               required
-                              type="number"
-                              step="any"
                               placeholder="قیمت واحد"
-                              value={editing.unit_price ?? ''}
-                              onChange={(e) => setEditing({ ...editing, unit_price: e.target.value })}
+                              value={String(editing.unit_price ?? '')}
+                              onChange={(v) => setEditing({ ...editing, unit_price: v })}
                             />
                           )}
                           <label className="check">
@@ -1111,7 +1202,7 @@ function History({ user, ok }) {
                   )
                 : (
                     <tr key={item.id}>
-                      <td>{fa(effectiveJalali(item))}</td>
+                      <td>{faPlain(effectiveJalali(item))}</td>
                       <td>{item.product?.name || '—'}</td>
                       <td>{item.person?.name || '—'}</td>
                       <td>{item.user?.name || '—'}</td>
@@ -1201,7 +1292,7 @@ function Persons({ user, ok }) {
         name: editing.name,
         mobile: editing.mobile,
         note: editing.note,
-        products: (editing.products || []).map((product) => ({ id: product.id, quantity: product.quantity })),
+        products: (editing.products || []).map((product) => ({ id: product.id, quantity: toNum(product.quantity) })),
       },
     })
       .then(() => { setEditing(null); load(); ok('اطلاعات شخص ذخیره شد.') })
@@ -1248,12 +1339,9 @@ function Persons({ user, ok }) {
                 {editing.products.map((product) => (
                   <label className="person-product-row" key={product.id}>
                     <span>{product.name} <em>({product.unit || 'عدد'})</em></span>
-                    <input
-                      type="number"
-                      step="any"
-                      dir="ltr"
-                      value={product.quantity}
-                      onChange={(e) => setProductQuantity(product.id, e.target.value === '' ? '' : +e.target.value)}
+                    <DecimalInput
+                      value={String(product.quantity ?? '')}
+                      onChange={(v) => setProductQuantity(product.id, v)}
                     />
                   </label>
                 ))}
@@ -1507,7 +1595,7 @@ function ActivityLogs() {
             {items.map((item) => (
               <React.Fragment key={item.id}>
                 <tr className={`log-row ${item.action === 'login_failed' || item.action.includes('delete') ? 'log-alert' : ''}`}>
-                  <td>{fa(item.created_at_jalali)}</td>
+                  <td>{faPlain(item.created_at_jalali)}</td>
                   <td>{item.user?.name || '—'}</td>
                   <td><span className="chip static">{item.action_label || LOG_ACTION_LABELS[item.action] || item.action}</span></td>
                   <td className="log-summary">{faText(item.summary)}</td>
