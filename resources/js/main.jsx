@@ -359,7 +359,7 @@ function App() {
         <header>
           <h2>{page}</h2>
           <div className="user-info">
-            <span>{user.name} · {fa(user.mobile)}</span>
+            <span>{user.name} · {faPlain(user.mobile)}</span>
             <button onClick={() => api('/api/logout', { method: 'POST' }).then(load)}>خروج</button>
           </div>
         </header>
@@ -1236,7 +1236,7 @@ function History({ user, ok }) {
 const statusClass = (status) => (status === 'بدهکار' ? 'debtor' : status === 'طلبکار' ? 'creditor' : status === 'تسویه' ? 'settled' : '')
 
 // موبایل «0» یا خالی به‌عنوان بدون موبایل نمایش داده می‌شود
-const displayMobile = (mobile) => (mobile && String(mobile).trim() !== '0' ? fa(mobile) : 'بدون موبایل')
+const displayMobile = (mobile) => (mobile && String(mobile).trim() !== '0' ? faPlain(mobile) : 'بدون موبایل')
 
 function Persons({ user, ok }) {
   const [persons, setPersons] = useState([])
@@ -1479,7 +1479,7 @@ function Users({ user, ok }) {
                 : (
                     <tr key={item.id}>
                       <td>{item.name}{item.is_admin ? ' (مدیر کل)' : ''}</td>
-                      <td>{fa(item.mobile)}</td>
+                      <td>{faPlain(item.mobile)}</td>
                       <td>
                         {item.is_admin
                           ? 'همه دسترسی‌ها'
