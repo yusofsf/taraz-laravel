@@ -338,7 +338,7 @@ function App() {
   const can = (perm) => user.is_admin || user[perm]
   const nav = ['داشبورد',
     'فاکتورهای امروز',
-    'معاملات آتی',
+    'معاملات آتی (پیش‌فاکتور)',
     ...(can('can_add_products') || can('can_change_balance') ? ['کالاها'] : []),
     ...(can('can_edit_products') ? ['ویرایش کالاها'] : []),
     'تاریخچه',
@@ -366,7 +366,7 @@ function App() {
         <Msg x={msg} />
         {page === 'داشبورد' && <Dashboard user={user} />}
         {page === 'فاکتورهای امروز' && <TodayInvoices />}
-        {page === 'معاملات آتی' && <FutureTrades user={user} ok={setMsg} />}
+        {page === 'معاملات آتی (پیش‌فاکتور)' && <FutureTrades user={user} ok={setMsg} />}
         {page === 'کالاها' && <Products user={user} ok={setMsg} />}
         {page === 'ویرایش کالاها' && <EditProducts user={user} ok={setMsg} />}
         {page === 'تاریخچه' && <History user={user} ok={setMsg} />}
@@ -489,7 +489,7 @@ function Dashboard({ user }) {
       </div>
       <div className="panel">
         <div className="panel-title">
-          <span>تراز کالاها</span>
+          <span>موجودی کالاها</span>
           <small>{data.today_jalali ? `امروز: ${faPlain(data.today_jalali)}` : 'برای جزئیات روی کالا کلیک کنید'}</small>
         </div>
         <div className="product-balance">
@@ -911,6 +911,7 @@ function FutureTrades({ user, ok }) {
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
 
+  const canEdit = user.is_admin || user.can_edit_history
   const canDelete = user.is_admin || user.can_delete_history
 
   const load = () => {
@@ -939,6 +940,22 @@ function FutureTrades({ user, ok }) {
       .catch((x) => setError(x.message))
   }
 
+  const convert = (item) => {
+    if (!window.confirm('این معامله آتی به معامله معمولی تبدیل شود؟ موجودی کالا و تسویه اعمال می‌شود.')) return
+    api(`/api/history/${item.id}`, {
+      method: 'PUT',
+      body: {
+        amount: toNum(item.change_amount),
+        unit_price: toNum(item.unit_price),
+        person_id: item.person?.id || null,
+        note: item.note ?? null,
+        record_in_balance: true
+      }
+    })
+      .then(() => { ok('معامله آتی به معامله معمولی تبدیل شد.'); load() })
+      .catch((x) => setError(x.message))
+  }
+
   // ویرایش معامله آتی از صفحه تاریخچه انجام می‌شود؛ همان‌جا مقدار و شخص قابل تغییر است
   const buys = items.filter((x) => x.direction === 'خرید')
   const sales = items.filter((x) => x.direction === 'فروش')
@@ -964,7 +981,7 @@ function FutureTrades({ user, ok }) {
                 <thead>
                   <tr>
                     <th>تاریخ معامله</th><th>کالا</th><th>نوع</th><th>مقدار</th><th>قیمت واحد</th>
-                    <th>مبلغ کل</th><th>طرف معامله</th><th>کاربر</th><th>یادداشت</th>{canDelete && <th>عملیات</th>}
+                    <th>مبلغ کل</th><th>طرف معامله</th><th>کاربر</th><th>یادداشت</th>{(canEdit || canDelete) && <th>عملیات</th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -983,9 +1000,10 @@ function FutureTrades({ user, ok }) {
                       </td>
                       <td>{item.user?.name || '—'}</td>
                       <td>{item.note || '—'}</td>
-                      {canDelete && (
+                      {(canEdit || canDelete) && (
                         <td>
-                          <button type="button" className="ghost" onClick={() => remove(item)}>حذف</button>
+                          {canEdit && <button type="button" onClick={() => convert(item)}>تبدیل به معامله معمولی</button>}
+                          {canDelete && <button type="button" className="ghost" onClick={() => remove(item)}>حذف</button>}
                         </td>
                       )}
                     </tr>
