@@ -398,9 +398,11 @@ class ProductController extends Controller
     }
 
     /**
-     * تحویل: مقدار مشخصی از انبار یک شخص کم می‌شود؛ یعنی کالا به او تحویل
-     * داده شده است. تراز انبار کالا دست‌نخورده می‌ماند و رکورد تحویل در
-     * تاریخچه و گزارش فعالیت‌ها ثبت می‌شود (قابل ویرایش و حذف).
+     * تحویل کالا به شخص. به اندازه‌ی مقدار تحویل، هم انبار همان شخص (مقدار
+     * بدهکاری/بستانکاری او روی آن کالا) و هم تراز انبار کالا کم می‌شود؛ مثل
+     * نمونه‌ی «۵ کیلو فروش، ۳ کیلو تحویل» که انبار ما و بستانکاری او هر دو
+     * به ۲ می‌رسند. رکورد تحویل در تاریخچه و گزارش فعالیت‌ها ثبت می‌شود و
+     * قابل ویرایش و حذف است.
      */
     public function deliverToPerson(Request $request, Person $person): JsonResponse
     {
@@ -423,23 +425,26 @@ class ProductController extends Controller
         return response()->json(DB::transaction(function () use ($data, $gregorianTrade, $request, $person, $product) {
             $quantity = (float) $data['quantity'];
 
-            // انبار شخص به اندازه تحویل کم می‌شود؛ موجودی انبار کالا دست نمی‌خورد
-            $this->adjustPersonBalance($person->id, $product->id, -$quantity);
-
+            // تحویل هم انبار شخص را کم می‌کند و هم انبار کالا را
             $previous = (float) $product->quantity;
+            $product->decrement('quantity', $quantity);
+            $product->refresh();
+            $this->adjustPersonBalance($person->id, $product->id, -$quantity);
 
             $delivery = BalanceChange::create([
                 'product_id' => $product->id,
                 'user_id' => $request->session()->get('user_id'),
                 'person_id' => $person->id,
                 'type' => BalanceChange::TYPE_DELIVERY,
-                'record_in_balance' => false,
+                'record_in_balance' => true,
                 'change_amount' => -$quantity,
                 'previous_quantity' => $previous,
-                'new_quantity' => $previous,
+                'new_quantity' => (float) $product->quantity,
                 'trade_date' => $gregorianTrade,
                 'note' => $data['note'] ?? 'تحویل '.$product->name.' به '.$person->name,
             ]);
+
+            $this->recomputeProductHistory($product);
 
             $this->logActivity($request, ActivityLog::ACTION_DELIVERY, sprintf(
                 'تحویل %s %s به %s',
@@ -450,6 +455,8 @@ class ProductController extends Controller
                 'quantity' => $quantity,
                 'product' => $product->name,
                 'person' => $person->name,
+                'previous_quantity' => $previous,
+                'new_quantity' => (float) $product->quantity,
                 'trade_date' => $gregorianTrade,
                 'note' => $data['note'] ?? null,
             ], $product, $delivery->id);

@@ -820,8 +820,8 @@ function Products({ user, ok }) {
             <input placeholder="یادداشت" value={delivery.note} onChange={(x) => setDelivery({ ...delivery, note: x.target.value })} />
             <button disabled={busy}>ثبت تحویل</button>
           </form>
-          <small className="hint">
-            مقدار تحویل‌شده از موجودی انبار همان شخص کم می‌شود؛ تراز انبار خودِ کالا تغییر نمی‌کند.
+                    <small className="hint">
+            مقدار تحویل‌شده هم از انبار همان شخص و هم از تراز انبار کالا کم می‌شود (کالا به او تحویل داده شده است).
             {warehouse && <> انبار فعلی {warehouse.name} از این کالا: {fmt(warehouse.quantity)} {warehouse.unit || 'عدد'}.</>}
           </small>
         </div>

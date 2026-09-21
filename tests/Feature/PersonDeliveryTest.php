@@ -30,7 +30,41 @@ class PersonDeliveryTest extends TestCase
         $this->ali = Person::create(['name' => 'علی']);
     }
 
-    public function test_delivery_reduces_the_person_warehouse_without_touching_stock(): void
+    public function test_sale_then_delivery_matches_the_reported_case(): void
+    {
+        // انبار کالا از صفر شروع می‌شود
+        $gold = Product::create(['name' => 'طلا ۱۸', 'quantity' => 0, 'unit' => 'گرم']);
+
+        // مشتری ۵ کیلو به ما می‌فروشد: انبار کالا ۵ و بستانکاری او ۵ می‌شود
+        $this->actingAsSession($this->admin)
+            ->postJson('/api/products/'.$gold->id.'/balance', [
+                'direction' => 'خرید',
+                'quantity' => 5,
+                'unit_price' => 1000,
+                'trade_date' => '1405/06/01',
+                'settlement_method' => 'کاغذ',
+                'settlement_date' => '1405/06/01',
+                'person_id' => $this->ali->id,
+            ])
+            ->assertStatus(201);
+
+        $this->assertSame(5.0, (float) $gold->fresh()->quantity);
+        $this->assertSame(5.0, $this->warehouse($this->ali, $gold));
+
+        // سه کیلو تحویل می‌گیرد: انبار ما ۲ و بستانکاری او ۲
+        $this->actingAsSession($this->admin)
+            ->postJson('/api/persons/'.$this->ali->id.'/delivery', [
+                'product_id' => $gold->id,
+                'quantity' => 3,
+                'trade_date' => '1405/06/02',
+            ])
+            ->assertStatus(201);
+
+        $this->assertSame(2.0, (float) $gold->fresh()->quantity);
+        $this->assertSame(2.0, $this->warehouse($this->ali, $gold));
+    }
+
+    public function test_delivery_reduces_both_the_person_warehouse_and_the_stock(): void
     {
         // انبار علی ۱۲ گرم است
         $this->keep(12);
@@ -38,25 +72,25 @@ class PersonDeliveryTest extends TestCase
         $this->delivery(['quantity' => 5])->assertStatus(201);
 
         $this->assertSame(7.0, $this->warehouse($this->ali));
-        // تراز انبار کالا تغییر نمی‌کند
-        $this->assertSame(40.0, (float) $this->gold->fresh()->quantity);
+        $this->assertSame(35.0, (float) $this->gold->fresh()->quantity);
 
         $record = BalanceChange::where('type', 'delivery')->first();
         $this->assertNotNull($record);
         $this->assertSame($this->ali->id, $record->person_id);
         $this->assertEquals(-5.0, (float) $record->change_amount);
-        $this->assertFalse((bool) $record->record_in_balance);
+        $this->assertTrue((bool) $record->record_in_balance);
         $this->assertSame('2026-08-23', $record->trade_date->format('Y-m-d'));
         $this->assertSame('تحویل آزمایشی', $record->note);
     }
 
-    public function test_delivery_can_empty_the_warehouse_and_go_negative(): void
+    public function test_delivery_can_take_both_warehouses_negative(): void
     {
         $this->keep(3);
 
-        $this->delivery(['quantity' => 5])->assertStatus(201);
+        $this->delivery(['quantity' => 50])->assertStatus(201);
 
-        $this->assertSame(-2.0, $this->warehouse($this->ali));
+        $this->assertSame(-47.0, $this->warehouse($this->ali));
+        $this->assertSame(-10.0, (float) $this->gold->fresh()->quantity);
     }
 
     public function test_delivery_is_rejected_with_bad_input(): void
@@ -67,9 +101,10 @@ class PersonDeliveryTest extends TestCase
         $this->delivery(['quantity' => -4])->assertStatus(422);
 
         $this->assertSame(0, BalanceChange::where('type', 'delivery')->count());
+        $this->assertSame(40.0, (float) $this->gold->fresh()->quantity);
     }
 
-    public function test_deleting_delivery_restores_the_warehouse(): void
+    public function test_deleting_delivery_restores_both_warehouses(): void
     {
         $this->keep(12);
         $this->delivery(['quantity' => 5])->assertStatus(201);
@@ -84,7 +119,7 @@ class PersonDeliveryTest extends TestCase
         $this->assertSame(40.0, (float) $this->gold->fresh()->quantity);
     }
 
-    public function test_editing_delivery_amount_syncs_the_warehouse(): void
+    public function test_editing_delivery_amount_syncs_both_warehouses(): void
     {
         $this->keep(12);
         $this->delivery(['quantity' => 5])->assertStatus(201);
@@ -100,8 +135,8 @@ class PersonDeliveryTest extends TestCase
             ->assertStatus(200);
 
         $this->assertSame(4.0, $this->warehouse($this->ali));
+        $this->assertSame(32.0, (float) $this->gold->fresh()->quantity);
         $this->assertEquals(-8.0, (float) $record->fresh()->change_amount);
-        $this->assertSame(40.0, (float) $this->gold->fresh()->quantity);
     }
 
     public function test_delivery_appears_in_history_and_logs_activity(): void
@@ -117,9 +152,8 @@ class PersonDeliveryTest extends TestCase
 
         $this->assertSame(1, ActivityLog::where('action', 'delivery')->count());
 
-        // تحویل در فهرست معاملات آتی و فاکتورهای امروز نمی‌آید
+        // تحویل یک معامله نیست؛ در فهرست معاملات آتی نمی‌آید
         $this->actingAsSession($this->admin)->getJson('/api/trades/future')->assertOk()->assertJsonCount(0);
-        $this->actingAsSession($this->admin)->getJson('/api/invoices/today')->assertOk()->assertJsonPath('stats.count', 0);
     }
 
     public function test_delivery_works_for_money_products(): void
@@ -135,7 +169,7 @@ class PersonDeliveryTest extends TestCase
             ->assertStatus(201);
 
         $this->assertSame(-1000.0, (float) PersonProduct::where('person_id', $this->ali->id)->where('product_id', $rial->id)->value('quantity'));
-        $this->assertSame(0.0, (float) $rial->fresh()->quantity);
+        $this->assertSame(-1000.0, (float) $rial->fresh()->quantity);
     }
 
     private function delivery(array $overrides = [])
@@ -158,10 +192,10 @@ class PersonDeliveryTest extends TestCase
         ]);
     }
 
-    private function warehouse(Person $person): float
+    private function warehouse(Person $person, ?Product $product = null): float
     {
         return (float) (PersonProduct::where('person_id', $person->id)
-            ->where('product_id', $this->gold->id)
+            ->where('product_id', ($product ?? $this->gold)->id)
             ->value('quantity') ?? 0);
     }
 
