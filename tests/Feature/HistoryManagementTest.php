@@ -118,6 +118,105 @@ class HistoryManagementTest extends TestCase
         $this->assertSame(4.0, (float) $second->new_quantity);
     }
 
+    public function test_edit_updates_trade_and_settlement_dates(): void
+    {
+        $trade = $this->recordTrade(['trade_date' => '1405/06/01', 'settlement_date' => '1405/06/05']);
+
+        $this->actingAsSession($this->editor)
+            ->putJson("/api/history/{$trade->id}", [
+                'amount' => (float) $trade->change_amount,
+                'unit_price' => (float) $trade->unit_price,
+                'trade_date' => '1405/06/14',
+                'settlement_date' => '1405/06/20',
+            ])
+            ->assertOk()
+            ->assertJsonPath('trade_date_jalali', '1405/06/14')
+            ->assertJsonPath('settlement_date_jalali', '1405/06/20');
+
+        $this->assertDatabaseHas('balance_changes', [
+            'id' => $trade->id,
+            'trade_date' => '2026-09-05',
+            'settlement_date' => '2026-09-11',
+        ]);
+
+        // رکورد تسویه آینهٔ تاریخ تسویهٔ معامله است و با آن هم‌سان می‌شود.
+        $settlement = BalanceChange::where('parent_id', $trade->id)->where('type', 'settlement')->first();
+        $this->assertNotNull($settlement);
+        $this->assertSame('2026-09-11', $settlement->settlement_date->format('Y-m-d'));
+    }
+
+    public function test_edit_rejects_an_invalid_jalali_date(): void
+    {
+        $trade = $this->recordTrade(['trade_date' => '1405/06/01', 'settlement_date' => '1405/06/05']);
+
+        $this->actingAsSession($this->editor)
+            ->putJson("/api/history/{$trade->id}", [
+                'amount' => (float) $trade->change_amount,
+                'trade_date' => '1405/13/01',
+            ])
+            ->assertStatus(422);
+
+        $this->assertDatabaseHas('balance_changes', [
+            'id' => $trade->id,
+            'trade_date' => '2026-08-23',
+            'settlement_date' => '2026-08-27',
+        ]);
+    }
+
+    public function test_edit_without_settlement_date_keeps_the_existing_one(): void
+    {
+        $trade = $this->recordTrade(['trade_date' => '1405/06/01', 'settlement_date' => '1405/06/05']);
+
+        $this->actingAsSession($this->editor)
+            ->putJson("/api/history/{$trade->id}", [
+                'amount' => (float) $trade->change_amount,
+                'trade_date' => '1405/06/14',
+            ])
+            ->assertOk();
+
+        $this->assertDatabaseHas('balance_changes', [
+            'id' => $trade->id,
+            'trade_date' => '2026-09-05',
+            'settlement_date' => '2026-08-27',
+        ]);
+    }
+
+    public function test_edit_can_clear_the_trade_date(): void
+    {
+        $trade = $this->recordTrade(['trade_date' => '1405/06/01', 'settlement_date' => '1405/06/05']);
+
+        $this->actingAsSession($this->editor)
+            ->putJson("/api/history/{$trade->id}", [
+                'amount' => (float) $trade->change_amount,
+                'trade_date' => '',
+            ])
+            ->assertOk();
+
+        $this->assertDatabaseHas('balance_changes', [
+            'id' => $trade->id,
+            'trade_date' => null,
+        ]);
+    }
+
+    private function recordTrade(array $overrides = []): BalanceChange
+    {
+        $payload = array_merge([
+            'direction' => 'خرید',
+            'quantity' => 2,
+            'unit_price' => 1000,
+            'trade_date' => '1405/06/01',
+            'settlement_date' => '1405/06/01',
+            'settlement_method' => 'کاغذ',
+            'person_id' => $this->ali->id,
+        ], $overrides);
+
+        $response = $this->actingAsSession($this->admin)
+            ->postJson("/api/products/{$this->gold->id}/balance", $payload)
+            ->assertCreated();
+
+        return BalanceChange::findOrFail($response->json('id'));
+    }
+
     private function recordChange(float $amount, ?int $personId = null): BalanceChange
     {
         $payload = ['amount' => $amount];

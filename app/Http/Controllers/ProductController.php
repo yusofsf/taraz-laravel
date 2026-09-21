@@ -570,15 +570,29 @@ class ProductController extends Controller
             'record_in_balance' => 'nullable|boolean',
             'note' => 'nullable|string|max:200',
             'person_id' => 'nullable|integer|exists:persons,id',
+            'trade_date' => 'nullable|string',
+            'settlement_date' => 'nullable|string',
         ]);
 
-        return response()->json(DB::transaction(function () use ($data, $request, $change, $product) {
+        $hasTradeDate = $request->has('trade_date');
+        $hasSettlementDate = $request->has('settlement_date');
+
+        try {
+            $newTradeDate = $hasTradeDate ? Jalali::parseJalaliInput($data['trade_date'] ?? null) : null;
+            $newSettlementDate = $hasSettlementDate ? Jalali::parseJalaliInput($data['settlement_date'] ?? null) : null;
+        } catch (\InvalidArgumentException $exception) {
+            return response()->json(['message' => $exception->getMessage()], 422);
+        }
+
+        return response()->json(DB::transaction(function () use ($data, $request, $change, $product, $hasTradeDate, $hasSettlementDate, $newTradeDate, $newSettlementDate) {
             $newAmount = (float) $data['amount'];
             $wasInBalance = (bool) $change->record_in_balance;
             $inBalance = (bool) ($data['record_in_balance'] ?? $wasInBalance);
             $newPersonId = $data['person_id'] ?? null;
             $oldAmount = (float) $change->change_amount;
             $oldUnitPrice = (float) $change->unit_price;
+            $oldTradeDate = $change->trade_date?->toDateString();
+            $oldSettlementDate = $change->settlement_date?->toDateString();
             // معامله قیمت واحد دارد؛ برای تعدیل، قیمت کل رکورد صفر می‌ماند
             $newUnitPrice = $change->type === BalanceChange::TYPE_TRADE && $request->filled('unit_price')
                 ? (float) $data['unit_price']
@@ -604,14 +618,32 @@ class ProductController extends Controller
             // شخص از معامله آتی هم همین‌جا حفظ یا جابه‌جا می‌شود
             $this->movePersonBalance($change, $newAmount, $newPersonId);
 
-            $change->update([
+            $attributes = [
                 'person_id' => $newPersonId,
                 'record_in_balance' => $inBalance,
                 'change_amount' => $newAmount,
                 'unit_price' => $newUnitPrice,
                 'new_quantity' => $inBalance ? $change->previous_quantity + $newAmount : $change->previous_quantity,
                 'note' => $data['note'] ?? null,
-            ]);
+            ];
+
+            // تاریخ‌ها فقط وقتی تغییر می‌کنند که کلیدشان در درخواست آمده باشد؛
+            // رکوردهایی که فیلد تاریخ تسویه ندارند مقدار قبلی‌شان دست‌نخورده می‌ماند.
+            if ($hasTradeDate) {
+                $attributes['trade_date'] = $newTradeDate;
+            }
+            if ($hasSettlementDate) {
+                $attributes['settlement_date'] = $newSettlementDate;
+            }
+
+            $change->update($attributes);
+
+            // رکورد تسویه آینهٔ تاریخ تسویهٔ معامله است؛ با ویرایش معامله هم‌سان می‌شود.
+            if ($hasSettlementDate && $newSettlementDate !== null && $change->type === BalanceChange::TYPE_TRADE) {
+                BalanceChange::where('parent_id', $change->id)
+                    ->where('type', BalanceChange::TYPE_SETTLEMENT)
+                    ->update(['settlement_date' => $newSettlementDate]);
+            }
 
             if ($change->type === BalanceChange::TYPE_TRADE) {
                 if (! $wasInBalance && $inBalance) {
@@ -649,6 +681,10 @@ class ProductController extends Controller
                 'new_amount' => $newAmount,
                 'old_unit_price' => $oldUnitPrice,
                 'new_unit_price' => $newUnitPrice,
+                'old_trade_date' => $oldTradeDate,
+                'new_trade_date' => $change->trade_date?->toDateString(),
+                'old_settlement_date' => $oldSettlementDate,
+                'new_settlement_date' => $change->settlement_date?->toDateString(),
                 'record_in_balance' => $inBalance,
                 'type' => $change->type,
             ], $product, $change->id);

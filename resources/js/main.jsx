@@ -299,6 +299,9 @@ function JalaliInput({ value, onChange, placeholder, required = false }) {
 // تاریخ مؤثر رکورد در نمایش‌ها: تاریخ معامله اگر ثبت شده باشد، وگرنه تاریخ ایجاد
 const effectiveJalali = (item) => item.trade_date_jalali || item.created_at_jalali?.slice(0, 10) || ''
 
+// تاریخ تسویه فقط برای معامله و رکورد تسویه معنا دارد، نه تعدیل‌های کلی
+const showsSettlementDate = (item) => item?.type === 'trade' || item?.type === 'settlement'
+
 function BalanceLineChart({ items, granularity = 'day' }) {
   const data = useMemo(() => [...items].filter((item) => item.record_in_balance !== false).reverse().map((item) => {
     const date = item.created_at ? new Date(item.created_at) : null
@@ -1177,8 +1180,11 @@ function History({ user, ok }) {
     e.preventDefault()
     if (busy) return
     setBusy(true)
-    const body = { amount: toNum(editing.change_amount), note: editing.note, person_id: editing.person_id || null, record_in_balance: !!editing.record_in_balance }
+    const body = { amount: toNum(editing.change_amount), note: editing.note, person_id: editing.person_id || null, record_in_balance: !!editing.record_in_balance, trade_date: editing.trade_date || '' }
     if (editing.type === 'trade') body.unit_price = toNum(editing.unit_price)
+    // تاریخ تسویه فقط برای رکوردهایی ارسال می‌شود که فیلدش نمایش داده شده است تا مقدار
+    // رکوردهای تعدیلی دست‌نخورده بماند
+    if (showsSettlementDate(editing)) body.settlement_date = editing.settlement_date || ''
     api(`/api/history/${editing.id}`, { method: 'PUT', body })
       .then(() => { setEditing(null); ok('رکورد ویرایش شد.'); load(); loadChart() })
       .catch((x) => setError(x.message))
@@ -1234,6 +1240,10 @@ function History({ user, ok }) {
                             <option value="">بدون شخص (تعدیل کلی)</option>
                             {persons.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                           </select>
+                          <JalaliInput value={editing.trade_date || ''} onChange={(v) => setEditing({ ...editing, trade_date: v })} placeholder="تاریخ معامله" />
+                          {showsSettlementDate(editing) && (
+                            <JalaliInput value={editing.settlement_date || ''} onChange={(v) => setEditing({ ...editing, settlement_date: v })} placeholder="تاریخ تسویه" />
+                          )}
                           <input placeholder="یادداشت" value={editing.note || ''} onChange={(e) => setEditing({ ...editing, note: e.target.value })} />
                           <button disabled={busy}>ذخیره</button>
                           <button type="button" className="ghost" onClick={() => setEditing(null)}>انصراف</button>
@@ -1250,7 +1260,19 @@ function History({ user, ok }) {
                       <td className={item.change_amount > 0 ? 'up' : 'down'}>{item.change_amount > 0 ? '+' : ''}{fmt(item.change_amount)}</td>
                       {(canEdit || canDelete) && (
                         <td>
-                          {canEdit && <button type="button" onClick={() => setEditing({ ...item, person_id: item.person?.id || '' })}>ویرایش</button>}
+                          {canEdit && (
+                            <button
+                              type="button"
+                              onClick={() => setEditing({
+                                ...item,
+                                person_id: item.person?.id || '',
+                                trade_date: faDigits(item.trade_date_jalali || ''),
+                                settlement_date: faDigits(item.settlement_date_jalali || ''),
+                              })}
+                            >
+                              ویرایش
+                            </button>
+                          )}
                           {canDelete && <button type="button" className="ghost" onClick={() => remove(item)}>حذف</button>}
                         </td>
                       )}
