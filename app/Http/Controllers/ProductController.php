@@ -241,6 +241,167 @@ class ProductController extends Controller
     }
 
     /**
+     * حواله کالا: انتقال مقدار مشخصی از یک کالا از یک شخص به شخص دیگر.
+     * تراز انبار کالا تغییری نمی‌کند؛ فقط موجودی همان کالا نزد دو طرف
+     * جابه‌جا می‌شود (مبدأ کم، مقصد زیاد). این با «حواله»ی تسویه در فرم
+     * خرید و فروش — که پول را بین دو شخص جابه‌جا می‌کند — فرق دارد.
+     */
+    public function transferGoods(Request $request, Product $product): JsonResponse
+    {
+        if (array_key_exists($product->name, self::MONEY_PRODUCTS)) {
+            return response()->json(['message' => 'حواله کالا برای ریال و کاغذ ثبت نمی‌شود.'], 409);
+        }
+
+        $data = $request->validate([
+            'quantity' => $this->quantityRule($product->unit).'|not_in:0',
+            'from_person_id' => 'required|integer|exists:persons,id|different:to_person_id',
+            'to_person_id' => 'required|integer|exists:persons,id',
+            'trade_date' => 'required|string',
+            'note' => 'nullable|string|max:200',
+        ], [
+            'from_person_id.required' => 'شخص مبدأ حواله را انتخاب کنید.',
+            'from_person_id.different' => 'مبدأ و مقصد حواله نمی‌توانند یک شخص باشند.',
+            'to_person_id.required' => 'شخص مقصد حواله را انتخاب کنید.',
+        ]);
+
+        try {
+            $gregorianTrade = Jalali::parseJalaliInput($request->input('trade_date'));
+        } catch (\InvalidArgumentException $exception) {
+            return response()->json(['message' => $exception->getMessage()], 422);
+        }
+
+        return response()->json(DB::transaction(function () use ($data, $gregorianTrade, $request, $product) {
+            $quantity = (float) $data['quantity'];
+            $fromPerson = Person::find((int) $data['from_person_id']);
+            $toPerson = Person::find((int) $data['to_person_id']);
+
+            $this->adjustPersonBalance((int) $data['from_person_id'], $product->id, -$quantity);
+            $this->adjustPersonBalance((int) $data['to_person_id'], $product->id, $quantity);
+
+            $previous = (float) $product->quantity;
+
+            $transfer = BalanceChange::create([
+                'product_id' => $product->id,
+                'user_id' => $request->session()->get('user_id'),
+                'from_person_id' => (int) $data['from_person_id'],
+                'to_person_id' => (int) $data['to_person_id'],
+                'type' => BalanceChange::TYPE_TRANSFER,
+                'record_in_balance' => false,
+                'change_amount' => $quantity,
+                'previous_quantity' => $previous,
+                'new_quantity' => $previous,
+                'trade_date' => $gregorianTrade,
+                'note' => $data['note'] ?? 'حواله کالا از '.$fromPerson?->name.' به '.$toPerson?->name,
+            ]);
+
+            $this->logActivity($request, ActivityLog::ACTION_TRANSFER, sprintf(
+                'حواله کالا %s %s از %s به %s',
+                self::trimZeros($quantity),
+                $product->name,
+                $fromPerson?->name,
+                $toPerson?->name,
+            ), [
+                'quantity' => $quantity,
+                'product' => $product->name,
+                'from_person' => $fromPerson?->name,
+                'to_person' => $toPerson?->name,
+                'trade_date' => $gregorianTrade,
+                'note' => $data['note'] ?? null,
+            ], $product, $transfer->id);
+
+            return $transfer->fresh(['product', 'fromPerson', 'toPerson']);
+        }), 201);
+    }
+
+    /**
+     * ویرایش حواله کالا: مقدار، مبدأ، مقصد، تاریخ و یادداشت. اثر قبلی برگردانده
+     * و اثر تازه روی موجودی دو طرف اعمال می‌شود؛ تراز انبار دست‌نخورده می‌ماند.
+     */
+    private function updateTransfer(Request $request, BalanceChange $transfer): JsonResponse
+    {
+        $product = $transfer->product;
+
+        $data = $request->validate([
+            'quantity' => $this->quantityRule($product->unit).'|not_in:0',
+            'from_person_id' => 'required|integer|exists:persons,id|different:to_person_id',
+            'to_person_id' => 'required|integer|exists:persons,id',
+            'trade_date' => 'nullable|string',
+            'note' => 'nullable|string|max:200',
+        ], [
+            'from_person_id.required' => 'شخص مبدأ حواله را انتخاب کنید.',
+            'from_person_id.different' => 'مبدأ و مقصد حواله نمی‌توانند یک شخص باشند.',
+            'to_person_id.required' => 'شخص مقصد حواله را انتخاب کنید.',
+        ]);
+
+        $hasTradeDate = $request->has('trade_date');
+
+        try {
+            $newTradeDate = $hasTradeDate ? Jalali::parseJalaliInput($data['trade_date'] ?? null) : null;
+        } catch (\InvalidArgumentException $exception) {
+            return response()->json(['message' => $exception->getMessage()], 422);
+        }
+
+        return response()->json(DB::transaction(function () use ($data, $request, $transfer, $product, $hasTradeDate, $newTradeDate) {
+            $quantity = (float) $data['quantity'];
+            $oldQuantity = (float) $transfer->change_amount;
+
+            // اثر قبلی برگردد تا موجودی دو طرف از نو ساخته شود
+            $this->reverseTransfer($transfer);
+
+            $this->adjustPersonBalance((int) $data['from_person_id'], $product->id, -$quantity);
+            $this->adjustPersonBalance((int) $data['to_person_id'], $product->id, $quantity);
+
+            $attributes = [
+                'from_person_id' => (int) $data['from_person_id'],
+                'to_person_id' => (int) $data['to_person_id'],
+                'change_amount' => $quantity,
+                'previous_quantity' => (float) $product->quantity,
+                'new_quantity' => (float) $product->quantity,
+                'note' => $data['note'] ?? null,
+            ];
+
+            // تاریخ فقط وقتی تغییر می‌کند که کلیدش در درخواست آمده باشد
+            if ($hasTradeDate) {
+                $attributes['trade_date'] = $newTradeDate;
+            }
+
+            $transfer->update($attributes);
+
+            $this->logActivity($request, ActivityLog::ACTION_HISTORY_UPDATE, sprintf(
+                'ویرایش حواله کالا %s: مقدار %s → %s',
+                $product->name,
+                self::trimZeros($oldQuantity),
+                self::trimZeros($quantity),
+            ), [
+                'change_id' => $transfer->id,
+                'old_quantity' => $oldQuantity,
+                'quantity' => $quantity,
+                'from_person_id' => (int) $data['from_person_id'],
+                'to_person_id' => (int) $data['to_person_id'],
+                'trade_date' => $transfer->trade_date?->toDateString(),
+                'note' => $data['note'] ?? null,
+            ], $product, $transfer->id);
+
+            return $transfer->fresh(['product', 'fromPerson', 'toPerson']);
+        }));
+    }
+
+    /**
+     * اثر یک حواله کالا را برمی‌گرداند: مقدار از مقصد کم و به مبدأ اضافه می‌شود.
+     */
+    private function reverseTransfer(BalanceChange $transfer): void
+    {
+        $quantity = (float) $transfer->change_amount;
+
+        if ($transfer->from_person_id !== null) {
+            $this->adjustPersonBalance((int) $transfer->from_person_id, $transfer->product_id, $quantity);
+        }
+        if ($transfer->to_person_id !== null) {
+            $this->adjustPersonBalance((int) $transfer->to_person_id, $transfer->product_id, -$quantity);
+        }
+    }
+
+    /**
      * Deletes a product that has no balance history. کاغذ/ریال are system
      * money products and can never be removed.
      */
@@ -562,6 +723,11 @@ class ProductController extends Controller
      */
     public function updateChange(Request $request, BalanceChange $change): JsonResponse
     {
+        // حواله کالا مسیر ویرایش خودش را دارد؛ بقیه‌ی رکوردها مثل قبل ویرایش می‌شوند
+        if ($change->type === BalanceChange::TYPE_TRANSFER) {
+            return $this->updateTransfer($request, $change);
+        }
+
         $product = $change->product;
 
         $data = $request->validate([
@@ -755,6 +921,16 @@ class ProductController extends Controller
         $changeId = $change->id;
 
         DB::transaction(function () use ($change, $product) {
+            // حواله کالا تراز انبار را تغییر نداده است؛ فقط سهم دو طرف برمی‌گردد
+            if ($change->type === BalanceChange::TYPE_TRANSFER) {
+                $this->reverseTransfer($change);
+                BalanceChange::where('parent_id', $change->id)->delete();
+                $change->delete();
+                $this->recomputeProductHistory($product);
+
+                return;
+            }
+
             // معامله آتی موجودی و تسویه را تغییر نداده؛ فقط بدهکاری/بستانکاری
             // شخص خودش برمی‌گردد. رکوردهای «ثبت در تراز» اثر تراز و تسویه هم دارند.
             if ($change->record_in_balance) {

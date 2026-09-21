@@ -257,6 +257,9 @@ function useArrowNav() {
 
 const EMPTY_PRODUCT = { name: '', sku: '', quantity: 0, unit: 'عدد' }
 const EMPTY_CHANGE = { product_id: '', direction: 'خرید', record_in_balance: true, quantity: '', unit_price: '', settlement_method: 'کاغذ', settlement_medium: 'ریال', trade_date: '', settlement_date: '', person_id: '', from_person_id: '', to_person_id: '', note: '' }
+// حواله کالا: انتقال کالا بین دو شخص؛ پولی رد و بدل نمی‌شود و تراز انبار کالا تغییر نمی‌کند
+const EMPTY_TRANSFER = { product_id: '', quantity: '', from_person_id: '', to_person_id: '', trade_date: '', note: '' }
+
 const EMPTY_PERSON = { name: '', mobile: '', note: '' }
 const EMPTY_USER = { name: '', mobile: '', can_add_users: false, can_add_products: false, can_edit_products: false, can_delete_products: false, can_change_balance: false, can_edit_history: false, can_delete_history: false, can_edit_persons: false, can_delete_persons: false, can_manage_permissions: false, can_view_logs: false }
 
@@ -675,6 +678,7 @@ function Products({ user, ok }) {
   const [products, setProducts] = useState([])
   const [form, setForm] = useState(EMPTY_PRODUCT)
   const [change, setChange] = useState(EMPTY_CHANGE)
+  const [transfer, setTransfer] = useState(EMPTY_TRANSFER)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
 
@@ -683,6 +687,8 @@ function Products({ user, ok }) {
 
   const canAdd = user.is_admin || user.can_add_products
   const canChange = user.is_admin || user.can_change_balance
+  // حواله کالا روی کالاهای واقعی ثبت می‌شود، نه کالاهای پیش‌فرض ریال و کاغذ
+  const goods = products.filter((p) => p.name !== 'ریال' && p.name !== 'کاغذ')
 
   const post = (e, url, body, reset) => {
     e.preventDefault()
@@ -756,6 +762,24 @@ function Products({ user, ok }) {
                 )
               : <>مبلغ کل: {fmt(toNum(change.quantity) * toNum(change.unit_price))} · بدون «ثبت در تراز» معامله آتی ثبت می‌شود: موجودی کالا و تسویه تغییر نمی‌کند اما بدهکاری/بستانکاری طرف معامله ثبت می‌شود.</>}
           </small>
+        </div>
+      )}
+      {canChange && (
+        <div className="panel">
+          <h3>حواله کالا (انتقال بین دو شخص)</h3>
+          <form className="form" onSubmit={(x) => post(x, `/api/products/${transfer.product_id}/transfer`, { ...transfer, quantity: toNum(transfer.quantity) }, () => setTransfer(EMPTY_TRANSFER))}>
+            <select required value={transfer.product_id} onChange={(x) => setTransfer({ ...transfer, product_id: x.target.value })}>
+              <option value="">کالا را انتخاب کنید</option>
+              {goods.map((item) => <option key={item.id} value={item.id}>{item.name} ({fmt(item.quantity)} {item.unit || 'عدد'})</option>)}
+            </select>
+            <DecimalInput required placeholder="مقدار حواله" value={transfer.quantity} onChange={(v) => setTransfer({ ...transfer, quantity: v })} />
+            <PersonPicker value={transfer.from_person_id} onChange={(id) => setTransfer({ ...transfer, from_person_id: id })} placeholder="حواله از شخص" />
+            <PersonPicker value={transfer.to_person_id} onChange={(id) => setTransfer({ ...transfer, to_person_id: id })} placeholder="حواله به شخص" />
+            <JalaliInput required value={transfer.trade_date} onChange={(v) => setTransfer({ ...transfer, trade_date: v })} placeholder="تاریخ حواله" />
+            <input placeholder="یادداشت" value={transfer.note} onChange={(x) => setTransfer({ ...transfer, note: x.target.value })} />
+            <button disabled={busy}>ثبت حواله</button>
+          </form>
+          <small className="hint">مقدار از موجودی شخص مبدأ کم و به موجودی شخص مقصد اضافه می‌شود؛ تراز انبار کالا تغییر نمی‌کند. ریال و کاغذ در این فهرست نیستند.</small>
         </div>
       )}
       <div className="panel">
@@ -1180,11 +1204,13 @@ function History({ user, ok }) {
     e.preventDefault()
     if (busy) return
     setBusy(true)
-    const body = { amount: toNum(editing.change_amount), note: editing.note, person_id: editing.person_id || null, record_in_balance: !!editing.record_in_balance, trade_date: editing.trade_date || '' }
+    const body = editing.type === 'transfer'
+      ? { quantity: toNum(editing.change_amount), from_person_id: editing.from_person_id || null, to_person_id: editing.to_person_id || null, trade_date: editing.trade_date || '', note: editing.note }
+      : { amount: toNum(editing.change_amount), note: editing.note, person_id: editing.person_id || null, record_in_balance: !!editing.record_in_balance, trade_date: editing.trade_date || '' }
     if (editing.type === 'trade') body.unit_price = toNum(editing.unit_price)
     // تاریخ تسویه فقط برای رکوردهایی ارسال می‌شود که فیلدش نمایش داده شده است تا مقدار
     // رکوردهای تعدیلی دست‌نخورده بماند
-    if (showsSettlementDate(editing)) body.settlement_date = editing.settlement_date || ''
+    if (editing.type !== 'transfer' && showsSettlementDate(editing)) body.settlement_date = editing.settlement_date || ''
     api(`/api/history/${editing.id}`, { method: 'PUT', body })
       .then(() => { setEditing(null); ok('رکورد ویرایش شد.'); load(); loadChart() })
       .catch((x) => setError(x.message))
@@ -1224,24 +1250,38 @@ function History({ user, ok }) {
                     <tr key={item.id}>
                       <td colSpan={canEdit || canDelete ? 6 : 5}>
                         <form className="form" onSubmit={saveEdit}>
-                          <DecimalInput required value={String(editing.change_amount ?? '')} onChange={(v) => setEditing({ ...editing, change_amount: v })} />
-                          {editing.type === 'trade' && (
-                            <DecimalInput
-                              required
-                              placeholder="قیمت واحد"
-                              value={String(editing.unit_price ?? '')}
-                              onChange={(v) => setEditing({ ...editing, unit_price: v })}
-                            />
+                          <DecimalInput
+                            required
+                            placeholder={editing.type === 'transfer' ? 'مقدار حواله' : 'مقدار'}
+                            value={String(editing.change_amount ?? '')}
+                            onChange={(v) => setEditing({ ...editing, change_amount: v })}
+                          />
+                          {editing.type === 'transfer' ? (
+                            <>
+                              <PersonPicker value={editing.from_person_id || ''} onChange={(id) => setEditing({ ...editing, from_person_id: id })} placeholder="حواله از شخص" />
+                              <PersonPicker value={editing.to_person_id || ''} onChange={(id) => setEditing({ ...editing, to_person_id: id })} placeholder="حواله به شخص" />
+                            </>
+                          ) : (
+                            <>
+                              {editing.type === 'trade' && (
+                                <DecimalInput
+                                  required
+                                  placeholder="قیمت واحد"
+                                  value={String(editing.unit_price ?? '')}
+                                  onChange={(v) => setEditing({ ...editing, unit_price: v })}
+                                />
+                              )}
+                              <label className="check">
+                                <input type="checkbox" checked={!!editing.record_in_balance} onChange={(e) => setEditing({ ...editing, record_in_balance: e.target.checked })} />ثبت در تراز
+                              </label>
+                              <select value={editing.person_id || ''} onChange={(e) => setEditing({ ...editing, person_id: e.target.value })}>
+                                <option value="">بدون شخص (تعدیل کلی)</option>
+                                {persons.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                              </select>
+                            </>
                           )}
-                          <label className="check">
-                            <input type="checkbox" checked={!!editing.record_in_balance} onChange={(e) => setEditing({ ...editing, record_in_balance: e.target.checked })} />ثبت در تراز
-                          </label>
-                          <select value={editing.person_id || ''} onChange={(e) => setEditing({ ...editing, person_id: e.target.value })}>
-                            <option value="">بدون شخص (تعدیل کلی)</option>
-                            {persons.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                          </select>
-                          <JalaliInput value={editing.trade_date || ''} onChange={(v) => setEditing({ ...editing, trade_date: v })} placeholder="تاریخ معامله" />
-                          {showsSettlementDate(editing) && (
+                          <JalaliInput value={editing.trade_date || ''} onChange={(v) => setEditing({ ...editing, trade_date: v })} placeholder={editing.type === 'transfer' ? 'تاریخ حواله' : 'تاریخ معامله'} />
+                          {editing.type !== 'transfer' && showsSettlementDate(editing) && (
                             <JalaliInput value={editing.settlement_date || ''} onChange={(v) => setEditing({ ...editing, settlement_date: v })} placeholder="تاریخ تسویه" />
                           )}
                           <input placeholder="یادداشت" value={editing.note || ''} onChange={(e) => setEditing({ ...editing, note: e.target.value })} />
@@ -1255,9 +1295,9 @@ function History({ user, ok }) {
                     <tr key={item.id}>
                       <td>{faPlain(effectiveJalali(item))}</td>
                       <td>{item.product?.name || '—'}</td>
-                      <td>{item.person?.name || '—'}</td>
+                      <td>{item.type === 'transfer' ? `از ${item.from_person?.name || '—'} به ${item.to_person?.name || '—'}` : (item.person?.name || '—')}</td>
                       <td>{item.user?.name || '—'}</td>
-                      <td className={item.change_amount > 0 ? 'up' : 'down'}>{item.change_amount > 0 ? '+' : ''}{fmt(item.change_amount)}</td>
+                      <td className={item.type === 'transfer' ? '' : (item.change_amount > 0 ? 'up' : 'down')}>{item.type === 'transfer' ? fmt(item.change_amount) : `${item.change_amount > 0 ? '+' : ''}${fmt(item.change_amount)}`}</td>
                       {(canEdit || canDelete) && (
                         <td>
                           {canEdit && (
@@ -1266,6 +1306,8 @@ function History({ user, ok }) {
                               onClick={() => setEditing({
                                 ...item,
                                 person_id: item.person?.id || '',
+                                from_person_id: item.from_person?.id || '',
+                                to_person_id: item.to_person?.id || '',
                                 trade_date: faDigits(item.trade_date_jalali || ''),
                                 settlement_date: faDigits(item.settlement_date_jalali || ''),
                               })}
@@ -1575,6 +1617,7 @@ const LOG_ACTION_LABELS = {
   login: 'ورود', login_failed: 'ورود ناموفق', logout: 'خروج',
   product_create: 'افزودن کالا', product_update: 'ویرایش کالا', product_delete: 'حذف کالا',
   trade: 'معامله', adjust: 'تعدیل تراز', history_update: 'ویرایش تاریخچه', history_delete: 'حذف تاریخچه',
+  transfer: 'حواله کالا',
   person_create: 'افزودن شخص', person_update: 'ویرایش شخص', person_delete: 'حذف شخص',
   user_create: 'افزودن کاربر', user_update: 'ویرایش کاربر', user_delete: 'حذف کاربر',
   permission_update: 'تغییر دسترسی', profile_update: 'ویرایش مشخصات',

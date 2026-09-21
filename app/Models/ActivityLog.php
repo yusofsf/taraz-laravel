@@ -47,6 +47,8 @@ class ActivityLog extends Model
 
     public const ACTION_PROFILE_UPDATE = 'profile_update';
 
+    public const ACTION_TRANSFER = 'transfer';
+
     /** @var array<string, string> */
     public const ACTION_LABELS = [
         self::ACTION_LOGIN => 'ورود',
@@ -67,6 +69,7 @@ class ActivityLog extends Model
         self::ACTION_USER_DELETE => 'حذف کاربر',
         self::ACTION_PERMISSION_UPDATE => 'تغییر دسترسی',
         self::ACTION_PROFILE_UPDATE => 'ویرایش مشخصات',
+        self::ACTION_TRANSFER => 'حواله کالا',
     ];
 
     protected $fillable = [
