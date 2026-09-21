@@ -49,6 +49,8 @@ class ActivityLog extends Model
 
     public const ACTION_TRANSFER = 'transfer';
 
+    public const ACTION_DELIVERY = 'delivery';
+
     /** @var array<string, string> */
     public const ACTION_LABELS = [
         self::ACTION_LOGIN => 'ورود',
@@ -70,6 +72,7 @@ class ActivityLog extends Model
         self::ACTION_PERMISSION_UPDATE => 'تغییر دسترسی',
         self::ACTION_PROFILE_UPDATE => 'ویرایش مشخصات',
         self::ACTION_TRANSFER => 'حواله کالا',
+        self::ACTION_DELIVERY => 'تحویل',
     ];
 
     protected $fillable = [

@@ -18,6 +18,8 @@ class BalanceChange extends Model
 
     public const TYPE_TRANSFER = 'transfer';
 
+    public const TYPE_DELIVERY = 'delivery';
+
     protected $fillable = [
         'product_id', 'user_id', 'person_id', 'from_person_id', 'to_person_id',
         'type', 'direction', 'record_in_balance', 'change_amount', 'unit_price', 'total_price',

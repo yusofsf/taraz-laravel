@@ -260,6 +260,9 @@ const EMPTY_CHANGE = { product_id: '', direction: 'خرید', record_in_balance:
 // حواله کالا: انتقال کالا بین دو شخص؛ پولی رد و بدل نمی‌شود و تراز انبار کالا تغییر نمی‌کند
 const EMPTY_TRANSFER = { product_id: '', quantity: '', from_person_id: '', to_person_id: '', trade_date: '', note: '' }
 
+// تحویل کالا به شخص؛ مقدار از انبار همان شخص کم می‌شود
+const EMPTY_DELIVERY = { product_id: '', quantity: '', person_id: '', trade_date: '', note: '' }
+
 const EMPTY_PERSON = { name: '', mobile: '', note: '' }
 const EMPTY_USER = { name: '', mobile: '', can_add_users: false, can_add_products: false, can_edit_products: false, can_delete_products: false, can_change_balance: false, can_edit_history: false, can_delete_history: false, can_edit_persons: false, can_delete_persons: false, can_manage_permissions: false, can_view_logs: false }
 
@@ -679,6 +682,29 @@ function Products({ user, ok }) {
   const [form, setForm] = useState(EMPTY_PRODUCT)
   const [change, setChange] = useState(EMPTY_CHANGE)
   const [transfer, setTransfer] = useState(EMPTY_TRANSFER)
+  const [delivery, setDelivery] = useState(EMPTY_DELIVERY)
+  const [warehouse, setWarehouse] = useState(null)
+
+  // انبار فعلی همان شخص از کالای انتخاب‌شده را نشان می‌دهد تا اثر تحویل روشن باشد
+  useEffect(() => {
+    if (!delivery.product_id || !delivery.person_id) { setWarehouse(null); return }
+    api(`/api/products/${delivery.product_id}/persons`)
+      .then((d) => {
+        const row = (d?.persons || []).find((p) => String(p.id) === String(delivery.person_id))
+        setWarehouse(row ? { name: row.name, quantity: row.quantity, unit: d?.product?.unit } : null)
+      })
+      .catch(() => setWarehouse(null))
+  }, [delivery.product_id, delivery.person_id])
+
+  const postDelivery = (e) => {
+    e.preventDefault()
+    if (busy) return
+    setBusy(true)
+    api(`/api/persons/${delivery.person_id}/delivery`, { method: 'POST', body: { ...delivery, quantity: toNum(delivery.quantity) } })
+      .then(() => { setDelivery(EMPTY_DELIVERY); setWarehouse(null); load(); ok('تحویل ثبت شد.') })
+      .catch((x) => setError(x.message))
+      .finally(() => setBusy(false))
+  }
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
 
@@ -778,6 +804,26 @@ function Products({ user, ok }) {
             <button disabled={busy}>ثبت حواله</button>
           </form>
           <small className="hint">مقدار از موجودی شخص مبدأ کم و به موجودی شخص مقصد اضافه می‌شود؛ تراز انبار کالا تغییر نمی‌کند. همه‌ی کالاها، از جمله ریال و کاغذ، قابل انتخاب‌اند.</small>
+        </div>
+      )}
+      {canChange && (
+        <div className="panel">
+          <h3>تحویل کالا به شخص (کاهش انبار شخص)</h3>
+          <form className="form" onSubmit={postDelivery}>
+            <select required value={delivery.product_id} onChange={(x) => setDelivery({ ...delivery, product_id: x.target.value })}>
+              <option value="">کالا را انتخاب کنید</option>
+              {products.map((item) => <option key={item.id} value={item.id}>{item.name} ({fmt(item.quantity)} {item.unit || 'عدد'})</option>)}
+            </select>
+            <DecimalInput required placeholder="مقدار تحویل" value={delivery.quantity} onChange={(v) => setDelivery({ ...delivery, quantity: v })} />
+            <PersonPicker value={delivery.person_id} onChange={(id) => setDelivery({ ...delivery, person_id: id })} placeholder="تحویل به شخص" />
+            <JalaliInput required value={delivery.trade_date} onChange={(v) => setDelivery({ ...delivery, trade_date: v })} placeholder="تاریخ تحویل" />
+            <input placeholder="یادداشت" value={delivery.note} onChange={(x) => setDelivery({ ...delivery, note: x.target.value })} />
+            <button disabled={busy}>ثبت تحویل</button>
+          </form>
+          <small className="hint">
+            مقدار تحویل‌شده از موجودی انبار همان شخص کم می‌شود؛ تراز انبار خودِ کالا تغییر نمی‌کند.
+            {warehouse && <> انبار فعلی {warehouse.name} از این کالا: {fmt(warehouse.quantity)} {warehouse.unit || 'عدد'}.</>}
+          </small>
         </div>
       )}
       <div className="panel">
@@ -1293,7 +1339,7 @@ function History({ user, ok }) {
                     <tr key={item.id}>
                       <td>{faPlain(effectiveJalali(item))}</td>
                       <td>{item.product?.name || '—'}</td>
-                      <td>{item.type === 'transfer' ? `از ${item.from_person?.name || '—'} به ${item.to_person?.name || '—'}` : (item.person?.name || '—')}</td>
+                      <td>{item.type === 'transfer' ? `از ${item.from_person?.name || '—'} به ${item.to_person?.name || '—'}` : item.type === 'delivery' ? `${item.person?.name || '—'} (تحویل)` : (item.person?.name || '—')}</td>
                       <td>{item.user?.name || '—'}</td>
                       <td className={item.type === 'transfer' ? '' : (item.change_amount > 0 ? 'up' : 'down')}>{item.type === 'transfer' ? fmt(item.change_amount) : `${item.change_amount > 0 ? '+' : ''}${fmt(item.change_amount)}`}</td>
                       {(canEdit || canDelete) && (
@@ -1616,6 +1662,7 @@ const LOG_ACTION_LABELS = {
   product_create: 'افزودن کالا', product_update: 'ویرایش کالا', product_delete: 'حذف کالا',
   trade: 'معامله', adjust: 'تعدیل تراز', history_update: 'ویرایش تاریخچه', history_delete: 'حذف تاریخچه',
   transfer: 'حواله کالا',
+  delivery: 'تحویل',
   person_create: 'افزودن شخص', person_update: 'ویرایش شخص', person_delete: 'حذف شخص',
   user_create: 'افزودن کاربر', user_update: 'ویرایش کاربر', user_delete: 'حذف کاربر',
   permission_update: 'تغییر دسترسی', profile_update: 'ویرایش مشخصات',

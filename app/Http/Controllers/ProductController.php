@@ -398,6 +398,67 @@ class ProductController extends Controller
     }
 
     /**
+     * تحویل: مقدار مشخصی از انبار یک شخص کم می‌شود؛ یعنی کالا به او تحویل
+     * داده شده است. تراز انبار کالا دست‌نخورده می‌ماند و رکورد تحویل در
+     * تاریخچه و گزارش فعالیت‌ها ثبت می‌شود (قابل ویرایش و حذف).
+     */
+    public function deliverToPerson(Request $request, Person $person): JsonResponse
+    {
+        $product = Product::findOrFail((int) $request->validate([
+            'product_id' => 'required|integer|exists:products,id',
+        ])['product_id']);
+
+        $data = $request->validate([
+            'quantity' => $this->quantityRule($product->unit).'|not_in:0|gt:0',
+            'trade_date' => 'required|string',
+            'note' => 'nullable|string|max:200',
+        ]);
+
+        try {
+            $gregorianTrade = Jalali::parseJalaliInput($request->input('trade_date'));
+        } catch (\InvalidArgumentException $exception) {
+            return response()->json(['message' => $exception->getMessage()], 422);
+        }
+
+        return response()->json(DB::transaction(function () use ($data, $gregorianTrade, $request, $person, $product) {
+            $quantity = (float) $data['quantity'];
+
+            // انبار شخص به اندازه تحویل کم می‌شود؛ موجودی انبار کالا دست نمی‌خورد
+            $this->adjustPersonBalance($person->id, $product->id, -$quantity);
+
+            $previous = (float) $product->quantity;
+
+            $delivery = BalanceChange::create([
+                'product_id' => $product->id,
+                'user_id' => $request->session()->get('user_id'),
+                'person_id' => $person->id,
+                'type' => BalanceChange::TYPE_DELIVERY,
+                'record_in_balance' => false,
+                'change_amount' => -$quantity,
+                'previous_quantity' => $previous,
+                'new_quantity' => $previous,
+                'trade_date' => $gregorianTrade,
+                'note' => $data['note'] ?? 'تحویل '.$product->name.' به '.$person->name,
+            ]);
+
+            $this->logActivity($request, ActivityLog::ACTION_DELIVERY, sprintf(
+                'تحویل %s %s به %s',
+                self::trimZeros($quantity),
+                $product->name,
+                $person->name,
+            ), [
+                'quantity' => $quantity,
+                'product' => $product->name,
+                'person' => $person->name,
+                'trade_date' => $gregorianTrade,
+                'note' => $data['note'] ?? null,
+            ], $product, $delivery->id);
+
+            return $delivery->fresh(['product', 'person']);
+        }), 201);
+    }
+
+    /**
      * Deletes a product that has no balance history. کاغذ/ریال are system
      * money products and can never be removed.
      */
