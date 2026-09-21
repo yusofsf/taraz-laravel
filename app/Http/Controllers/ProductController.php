@@ -248,10 +248,6 @@ class ProductController extends Controller
      */
     public function transferGoods(Request $request, Product $product): JsonResponse
     {
-        if (array_key_exists($product->name, self::MONEY_PRODUCTS)) {
-            return response()->json(['message' => 'حواله کالا برای ریال و کاغذ ثبت نمی‌شود.'], 409);
-        }
-
         $data = $request->validate([
             'quantity' => $this->quantityRule($product->unit).'|not_in:0',
             'from_person_id' => 'required|integer|exists:persons,id|different:to_person_id',

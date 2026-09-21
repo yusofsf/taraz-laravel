@@ -687,8 +687,6 @@ function Products({ user, ok }) {
 
   const canAdd = user.is_admin || user.can_add_products
   const canChange = user.is_admin || user.can_change_balance
-  // حواله کالا روی کالاهای واقعی ثبت می‌شود، نه کالاهای پیش‌فرض ریال و کاغذ
-  const goods = products.filter((p) => p.name !== 'ریال' && p.name !== 'کاغذ')
 
   const post = (e, url, body, reset) => {
     e.preventDefault()
@@ -770,7 +768,7 @@ function Products({ user, ok }) {
           <form className="form" onSubmit={(x) => post(x, `/api/products/${transfer.product_id}/transfer`, { ...transfer, quantity: toNum(transfer.quantity) }, () => setTransfer(EMPTY_TRANSFER))}>
             <select required value={transfer.product_id} onChange={(x) => setTransfer({ ...transfer, product_id: x.target.value })}>
               <option value="">کالا را انتخاب کنید</option>
-              {goods.map((item) => <option key={item.id} value={item.id}>{item.name} ({fmt(item.quantity)} {item.unit || 'عدد'})</option>)}
+              {products.map((item) => <option key={item.id} value={item.id}>{item.name} ({fmt(item.quantity)} {item.unit || 'عدد'})</option>)}
             </select>
             <DecimalInput required placeholder="مقدار حواله" value={transfer.quantity} onChange={(v) => setTransfer({ ...transfer, quantity: v })} />
             <PersonPicker value={transfer.from_person_id} onChange={(id) => setTransfer({ ...transfer, from_person_id: id })} placeholder="حواله از شخص" />
@@ -779,7 +777,7 @@ function Products({ user, ok }) {
             <input placeholder="یادداشت" value={transfer.note} onChange={(x) => setTransfer({ ...transfer, note: x.target.value })} />
             <button disabled={busy}>ثبت حواله</button>
           </form>
-          <small className="hint">مقدار از موجودی شخص مبدأ کم و به موجودی شخص مقصد اضافه می‌شود؛ تراز انبار کالا تغییر نمی‌کند. ریال و کاغذ در این فهرست نیستند.</small>
+          <small className="hint">مقدار از موجودی شخص مبدأ کم و به موجودی شخص مقصد اضافه می‌شود؛ تراز انبار کالا تغییر نمی‌کند. همه‌ی کالاها، از جمله ریال و کاغذ، قابل انتخاب‌اند.</small>
         </div>
       )}
       <div className="panel">

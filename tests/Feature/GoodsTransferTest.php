@@ -51,22 +51,28 @@ class GoodsTransferTest extends TestCase
         $this->assertSame('حواله آزمایشی', $record->note);
     }
 
-    public function test_transfer_is_rejected_for_money_products(): void
+    public function test_transfer_works_for_money_products_too(): void
     {
         foreach (['ریال', 'کاغذ'] as $name) {
             $money = Product::firstOrCreate(['name' => $name], ['sku' => $name, 'quantity' => 0, 'unit' => 'عدد']);
 
             $this->actingAsSession($this->admin)
                 ->postJson('/api/products/'.$money->id.'/transfer', [
-                    'quantity' => 1,
+                    'quantity' => 5,
                     'from_person_id' => $this->ali->id,
                     'to_person_id' => $this->reza->id,
                     'trade_date' => '1405/06/01',
                 ])
-                ->assertStatus(409);
+                ->assertStatus(201);
+
+            // ریال و کاغذ هم مثل بقیه‌ی کالاها بین دو شخص جابه‌جا می‌شوند و
+            // تراز انبارشان دست‌نخورده می‌ماند
+            $this->assertSame(-5.0, $this->balance($this->ali, $money));
+            $this->assertSame(5.0, $this->balance($this->reza, $money));
+            $this->assertSame(0.0, (float) $money->fresh()->quantity);
         }
 
-        $this->assertSame(0, BalanceChange::where('type', 'transfer')->count());
+        $this->assertSame(2, BalanceChange::where('type', 'transfer')->count());
     }
 
     public function test_transfer_requires_two_different_persons(): void
@@ -185,10 +191,10 @@ class GoodsTransferTest extends TestCase
         ], $overrides));
     }
 
-    private function balance(Person $person): float
+    private function balance(Person $person, ?Product $product = null): float
     {
         return (float) (PersonProduct::where('person_id', $person->id)
-            ->where('product_id', $this->gold->id)
+            ->where('product_id', ($product ?? $this->gold)->id)
             ->value('quantity') ?? 0);
     }
 
