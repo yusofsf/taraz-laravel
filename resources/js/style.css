@@ -52,3 +52,5 @@ button.ghost{background:#eef2f7;color:#53617a}
 .balance-breakdown li.debtor em{color:#b3402f}
 .balance-breakdown li.creditor em{color:#087e6d}
 @media(max-width:550px){.cards.duo{grid-template-columns:1fr}}
+aside button.sub{padding-inline-start:30px;font-size:13px;opacity:.92}
+aside button.sub.active{opacity:1}

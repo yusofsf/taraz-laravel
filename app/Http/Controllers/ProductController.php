@@ -316,9 +316,15 @@ class ProductController extends Controller
     private function updateTransfer(Request $request, BalanceChange $transfer): JsonResponse
     {
         $product = $transfer->product;
+        $newProduct = $request->filled('product_id') ? Product::find((int) $request->input('product_id')) : $product;
+
+        if (! $newProduct) {
+            return response()->json(['message' => 'کالای انتخابشده معتبر نیست.'], 422);
+        }
 
         $data = $request->validate([
-            'quantity' => $this->quantityRule($product->unit).'|not_in:0',
+            'quantity' => $this->quantityRule($newProduct->unit).'|not_in:0',
+            'product_id' => 'nullable|integer|exists:products,id',
             'from_person_id' => 'required|integer|exists:persons,id|different:to_person_id',
             'to_person_id' => 'required|integer|exists:persons,id',
             'trade_date' => 'nullable|string',
@@ -337,22 +343,23 @@ class ProductController extends Controller
             return response()->json(['message' => $exception->getMessage()], 422);
         }
 
-        return response()->json(DB::transaction(function () use ($data, $request, $transfer, $product, $hasTradeDate, $newTradeDate) {
+        return response()->json(DB::transaction(function () use ($data, $request, $transfer, $product, $newProduct, $hasTradeDate, $newTradeDate) {
             $quantity = (float) $data['quantity'];
             $oldQuantity = (float) $transfer->change_amount;
 
             // اثر قبلی برگردد تا موجودی دو طرف از نو ساخته شود
             $this->reverseTransfer($transfer);
 
-            $this->adjustPersonBalance((int) $data['from_person_id'], $product->id, -$quantity);
-            $this->adjustPersonBalance((int) $data['to_person_id'], $product->id, $quantity);
+            $this->adjustPersonBalance((int) $data['from_person_id'], $newProduct->id, -$quantity);
+            $this->adjustPersonBalance((int) $data['to_person_id'], $newProduct->id, $quantity);
 
             $attributes = [
+                'product_id' => $newProduct->id,
                 'from_person_id' => (int) $data['from_person_id'],
                 'to_person_id' => (int) $data['to_person_id'],
                 'change_amount' => $quantity,
-                'previous_quantity' => (float) $product->quantity,
-                'new_quantity' => (float) $product->quantity,
+                'previous_quantity' => (float) $newProduct->quantity,
+                'new_quantity' => (float) $newProduct->quantity,
                 'note' => $data['note'] ?? null,
             ];
 
@@ -363,9 +370,14 @@ class ProductController extends Controller
 
             $transfer->update($attributes);
 
+            $this->recomputeProductHistory($product);
+            if ($newProduct->id !== $product->id) {
+                $this->recomputeProductHistory($newProduct);
+            }
+
             $this->logActivity($request, ActivityLog::ACTION_HISTORY_UPDATE, sprintf(
                 'ویرایش حواله کالا %s: مقدار %s → %s',
-                $product->name,
+                $newProduct->name,
                 self::trimZeros($oldQuantity),
                 self::trimZeros($quantity),
             ), [
@@ -704,6 +716,38 @@ class ProductController extends Controller
     }
 
     /**
+     * فهرست معاملهها برای صفحههای «لیست خرید» و «لیست فروش»: با فیلتر جهت
+     * (خرید/فروش)، کالا و بازه تاریخ مؤثر، از جدید به قدیم و صفحهبندیشده.
+     */
+    public function trades(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'direction' => 'nullable|in:خرید,فروش',
+            'product_id' => 'nullable|integer|exists:products,id',
+        ]);
+
+        $query = BalanceChange::with([
+            'product:id,name,unit', 'user:id,name', 'person:id,name',
+            'fromPerson:id,name', 'toPerson:id,name',
+        ])
+            ->where('type', BalanceChange::TYPE_TRADE)
+            ->latest();
+
+        if (! empty($data['direction'])) {
+            $query->where('direction', $data['direction']);
+        }
+        if (! empty($data['product_id'])) {
+            $query->where('product_id', (int) $data['product_id']);
+        }
+
+        if ($error = $this->applyEffectiveDateRange($request, $query)) {
+            return $error;
+        }
+
+        return response()->json($query->paginate(10));
+    }
+
+    /**
      * معامله‌های آتی: معامله‌هایی که «ثبت در تراز» ندارند؛ موجودی کالا را تغییر
      * نمی‌دهند اما بدهکاری/بستانکاری طرفِ معامله را می‌سازند.
      */
@@ -793,13 +837,24 @@ class ProductController extends Controller
         }
 
         $product = $change->product;
+        // کالای رکورد قابل ویرایش است؛ رکورد سیستمی تسویه کالای خود را از معاملهٔ
+        // والد میگیرد و کالایش جابهجا نمیشود.
+        $requestedProductId = $change->type === BalanceChange::TYPE_SETTLEMENT ? null : $request->input('product_id');
+        $newProduct = $requestedProductId ? Product::find((int) $requestedProductId) : $product;
+
+        if (! $newProduct) {
+            return response()->json(['message' => 'کالای انتخابشده معتبر نیست.'], 422);
+        }
+
+        $productChanged = $newProduct->id !== $product->id;
 
         $data = $request->validate([
-            'amount' => $this->quantityRule($product->unit).'|not_in:0',
+            'amount' => $this->quantityRule($newProduct->unit).'|not_in:0',
             'unit_price' => 'nullable|numeric|min:0.01',
             'record_in_balance' => 'nullable|boolean',
             'note' => 'nullable|string|max:200',
             'person_id' => 'nullable|integer|exists:persons,id',
+            'product_id' => 'nullable|integer|exists:products,id',
             'trade_date' => 'nullable|string',
             'settlement_date' => 'nullable|string',
         ]);
@@ -814,7 +869,7 @@ class ProductController extends Controller
             return response()->json(['message' => $exception->getMessage()], 422);
         }
 
-        return response()->json(DB::transaction(function () use ($data, $request, $change, $product, $hasTradeDate, $hasSettlementDate, $newTradeDate, $newSettlementDate) {
+        return response()->json(DB::transaction(function () use ($data, $request, $change, $product, $newProduct, $productChanged, $hasTradeDate, $hasSettlementDate, $newTradeDate, $newSettlementDate) {
             $newAmount = (float) $data['amount'];
             $wasInBalance = (bool) $change->record_in_balance;
             $inBalance = (bool) ($data['record_in_balance'] ?? $wasInBalance);
@@ -827,6 +882,81 @@ class ProductController extends Controller
             $newUnitPrice = $change->type === BalanceChange::TYPE_TRADE && $request->filled('unit_price')
                 ? (float) $data['unit_price']
                 : $oldUnitPrice;
+
+            // تغییر کالای رکورد: اول اثر قبلی از کالا و شخص قبلی برداشته میشود، بعد
+            // اثر تازه روی کالای جدید و همان شخص مینشیند. رکورد تسویه به کالای
+            // معامله وابسته نیست و دستنخورده میماند.
+            if ($productChanged) {
+                if ($wasInBalance) {
+                    $product->decrement('quantity', $change->change_amount);
+                }
+                if ($change->person_id) {
+                    $this->adjustPersonBalance((int) $change->person_id, $product->id, -$change->change_amount);
+                }
+
+                $previous = (float) $newProduct->quantity;
+                if ($inBalance) {
+                    $newProduct->increment('quantity', $newAmount);
+                    $newProduct->refresh();
+                }
+                if ($newPersonId) {
+                    $this->adjustPersonBalance((int) $newPersonId, $newProduct->id, $newAmount);
+                }
+
+                $moved = [
+                    'product_id' => $newProduct->id,
+                    'person_id' => $newPersonId,
+                    'record_in_balance' => $inBalance,
+                    'change_amount' => $newAmount,
+                    'unit_price' => $newUnitPrice,
+                    'previous_quantity' => $previous,
+                    'new_quantity' => $inBalance ? (float) $newProduct->quantity : $previous,
+                    'note' => $data['note'] ?? null,
+                ];
+
+                if ($hasTradeDate) {
+                    $moved['trade_date'] = $newTradeDate;
+                }
+                if ($hasSettlementDate) {
+                    $moved['settlement_date'] = $newSettlementDate;
+                }
+
+                $change->update($moved);
+
+                if ($hasSettlementDate && $newSettlementDate !== null && $change->type === BalanceChange::TYPE_TRADE) {
+                    BalanceChange::where('parent_id', $change->id)
+                        ->where('type', BalanceChange::TYPE_SETTLEMENT)
+                        ->update(['settlement_date' => $newSettlementDate]);
+                }
+
+                if ($change->type === BalanceChange::TYPE_TRADE) {
+                    if ($inBalance) {
+                        $this->syncTradeSettlement($change, $newAmount, $newUnitPrice);
+                    } else {
+                        $change->update(['total_price' => round($newAmount * $newUnitPrice, 2)]);
+                    }
+                }
+
+                $this->recomputeProductHistory($product);
+                $this->recomputeProductHistory($newProduct);
+
+                $this->logActivity($request, ActivityLog::ACTION_HISTORY_UPDATE, sprintf(
+                    'ویرایش رکورد تاریخچه %s → %s: مقدار %s',
+                    $product->name,
+                    $newProduct->name,
+                    self::trimZeros($newAmount),
+                ), [
+                    'change_id' => $change->id,
+                    'old_product' => $product->name,
+                    'new_product' => $newProduct->name,
+                    'old_amount' => $oldAmount,
+                    'new_amount' => $newAmount,
+                    'record_in_balance' => $inBalance,
+                    'type' => $change->type,
+                ], $newProduct, $change->id);
+
+                return $change->fresh();
+            }
 
             if ($wasInBalance && ! $inBalance) {
                 // تیک برداشته شد: معامله آتی می‌شود؛ اثر تراز کالا و تسویه برمی‌گردد

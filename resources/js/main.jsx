@@ -21,6 +21,7 @@ const PERMISSIONS = [
 const UNITS = ['عدد', 'گرم', 'مثقال', 'انس']
 const DIRECTIONS = ['خرید', 'فروش']
 const SETTLEMENT_METHODS = ['حواله', 'کاغذ', 'ریال']
+const LIST_PAGES = ['لیست خرید', 'لیست فروش']
 
 const csrfMeta = () => document.querySelector('meta[name=csrf-token]')
 
@@ -308,6 +309,9 @@ const effectiveJalali = (item) => item.trade_date_jalali || item.created_at_jala
 // تاریخ تسویه فقط برای معامله و رکورد تسویه معنا دارد، نه تعدیل‌های کلی
 const showsSettlementDate = (item) => item?.type === 'trade' || item?.type === 'settlement'
 
+// برچسب نوع تسویه در فهرستها: ریال → ریالی، کاغذ → ارزی
+const settlementLabel = (method) => (method === 'ریال' ? 'ریالی' : method === 'کاغذ' ? 'ارزی' : method === 'حواله' ? 'حوالهای' : (method || '—'))
+
 function BalanceLineChart({ items, granularity = 'day' }) {
   const data = useMemo(() => [...items].filter((item) => item.record_in_balance !== false).reverse().map((item) => {
     const date = item.created_at ? new Date(item.created_at) : null
@@ -337,6 +341,7 @@ function App() {
   const [user, setUser] = useState()
   const [page, setPage] = useState('داشبورد')
   const [msg, setMsg] = useState('')
+  const [listsOpen, setListsOpen] = useState(false)
 
   const load = () => api('/api/me').then(setUser).catch(() => setUser(null))
   useEffect(() => { load() }, [])
@@ -355,12 +360,26 @@ function App() {
     ...(can('can_add_users') ? ['کاربران'] : []),
     ...(can('can_view_logs') ? ['لاگ سامانه'] : []),
     'مشخصات']
+  const navSplit = nav.indexOf('تاریخچه') + 1
 
   return (
     <main>
       <aside>
         <h1>● تراز</h1>
-        {nav.map((x) => (
+        {nav.slice(0, navSplit).map((x) => (
+          <button key={x} className={page === x ? 'active' : ''} onClick={() => { setPage(x); setMsg('') }}>{x}</button>
+        ))}
+        <button
+          type="button"
+          className={LIST_PAGES.includes(page) ? 'active' : ''}
+          onClick={() => setListsOpen((open) => !open)}
+        >
+          لیستها {listsOpen ? '▾' : '◂'}
+        </button>
+        {listsOpen && LIST_PAGES.map((x) => (
+          <button key={x} className={page === x ? 'sub active' : 'sub'} onClick={() => { setPage(x); setMsg('') }}>{x}</button>
+        ))}
+        {nav.slice(navSplit).map((x) => (
           <button key={x} className={page === x ? 'active' : ''} onClick={() => { setPage(x); setMsg('') }}>{x}</button>
         ))}
       </aside>
@@ -379,6 +398,8 @@ function App() {
         {page === 'کالاها' && <Products user={user} ok={setMsg} />}
         {page === 'ویرایش کالاها' && <EditProducts user={user} ok={setMsg} />}
         {page === 'تاریخچه' && <History user={user} ok={setMsg} />}
+        {page === 'لیست خرید' && <Trades direction="خرید" />}
+        {page === 'لیست فروش' && <Trades direction="فروش" />}
         {page === 'اشخاص' && <Persons user={user} ok={setMsg} />}
         {page === 'کاربران' && <Users user={user} ok={setMsg} />}
         {page === 'لاگ سامانه' && <ActivityLogs />}
@@ -956,7 +977,7 @@ function TodayInvoices() {
                       <td>{fmt(item.change_amount)} {item.product?.unit || ''}</td>
                       <td>{item.unit_price ? fmt(item.unit_price) : '—'}</td>
                       <td>{item.total_price ? fmt(item.total_price) : '—'}</td>
-                      <td>{item.settlement_method || '—'}</td>
+                      <td>{settlementLabel(item.settlement_method)}</td>
                       <td>{faPlain(item.settlement_date_jalali || '—')}</td>
                       <td>
                         {item.from_person && item.to_person
@@ -1170,9 +1191,124 @@ function EditProducts({ user, ok }) {
   )
 }
 
+// لیست خرید و لیست فروش: همهٔ معاملههای یک جهت در همهٔ تاریخها، از جدید به قدیم.
+function Trades({ direction }) {
+  const [items, setItems] = useState([])
+  const [products, setProducts] = useState([])
+  const [filters, setFilters] = useState({ from: '', to: '', product_id: '' })
+  const [page, setPage] = useState(1)
+  const [meta, setMeta] = useState({ current_page: 1, last_page: 1, total: 0 })
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const filterQuery = () => {
+    const query = new URLSearchParams()
+    query.set('direction', direction)
+    if (filters.from) query.set('from', filters.from)
+    if (filters.to) query.set('to', filters.to)
+    if (filters.product_id) query.set('product_id', filters.product_id)
+    return query
+  }
+
+  const load = (targetPage = page) => {
+    if (busy) return Promise.resolve()
+    setBusy(true)
+    const query = filterQuery()
+    query.set('page', targetPage)
+    return api('/api/trades?' + query.toString())
+      .then((d) => {
+        setItems(Array.isArray(d?.data) ? d.data : [])
+        setMeta({ current_page: d?.current_page || 1, last_page: d?.last_page || 1, total: d?.total || 0 })
+        setError('')
+      })
+      .catch((x) => { setItems([]); setError(x.message) })
+      .finally(() => setBusy(false))
+  }
+
+  useEffect(() => {
+    load(1)
+    api('/api/products').then((list) => setProducts(Array.isArray(list) ? list : [])).catch(() => setProducts([]))
+  }, [direction])
+
+  const applyFilters = (e) => {
+    e.preventDefault()
+    setPage(1)
+    load(1)
+  }
+
+  const goPage = (targetPage) => {
+    if (targetPage < 1 || targetPage > meta.last_page || targetPage === meta.current_page || busy) return
+    setPage(targetPage)
+    load(targetPage)
+  }
+
+  return (
+    <>
+      <Msg x={error} />
+      <div className="panel">
+        <div className="panel-title">
+          <span>{direction === 'خرید' ? 'لیست خرید' : 'لیست فروش'}</span>
+          <small>{fa(meta.total)} معامله {direction}</small>
+        </div>
+        <form className="form range-form" onSubmit={applyFilters}>
+          <JalaliInput value={filters.from} onChange={(v) => setFilters({ ...filters, from: v })} placeholder="از تاریخ" />
+          <JalaliInput value={filters.to} onChange={(v) => setFilters({ ...filters, to: v })} placeholder="تا تاریخ" />
+          <select value={filters.product_id} onChange={(e) => setFilters({ ...filters, product_id: e.target.value })}>
+            <option value="">همه کالاها</option>
+            {products.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+        </form>
+        {items.length
+          ? (
+              <table>
+                <thead>
+                  <tr>
+                    <th>تاریخ معامله</th><th>کالا</th><th>نوع</th><th>مقدار</th><th>قیمت واحد</th>
+                    <th>مبلغ کل</th><th>تسویه</th><th>وضعیت</th><th>طرف معامله</th><th>کاربر</th><th>یادداشت</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {items.map((item) => (
+                    <tr key={item.id}>
+                      <td>{faPlain(effectiveJalali(item))}</td>
+                      <td>{item.product?.name || '—'}</td>
+                      <td className={item.direction === 'خرید' ? 'up' : 'down'}>{item.direction || '—'}</td>
+                      <td>{fmt(item.change_amount)} {item.product?.unit || ''}</td>
+                      <td>{item.unit_price ? fmt(item.unit_price) : '—'}</td>
+                      <td>{item.total_price ? fmt(item.total_price) : '—'}</td>
+                      <td>{settlementLabel(item.settlement_method)}</td>
+                      <td>{item.record_in_balance ? 'ثبت در تراز' : 'آتی'}</td>
+                      <td>
+                        {item.from_person && item.to_person
+                          ? item.from_person.name + ' → ' + item.to_person.name
+                          : item.person?.name || item.from_person?.name || item.to_person?.name || '—'}
+                      </td>
+                      <td>{item.user?.name || '—'}</td>
+                      <td>{item.note || '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )
+          : <div className="empty">معاملهای برای این فیلترها یافت نشد.</div>}
+        {meta.last_page > 1 && (
+          <div className="pagination">
+            <button type="button" className="ghost" disabled={busy || meta.current_page <= 1} onClick={() => goPage(meta.current_page - 1)}>قبلی</button>
+            {Array.from({ length: meta.last_page }, (_, i) => i + 1).map((p) => (
+              <button key={p} type="button" className={p === meta.current_page ? '' : 'ghost'} disabled={busy} onClick={() => goPage(p)}>{fa(p)}</button>
+            ))}
+            <button type="button" className="ghost" disabled={busy || meta.current_page >= meta.last_page} onClick={() => goPage(meta.current_page + 1)}>بعدی</button>
+          </div>
+        )}
+      </div>
+    </>
+  )
+}
+
 function History({ user, ok }) {
   const [items, setItems] = useState([])
   const [options, setOptions] = useState({ users: [], products: [] })
+  const [allProducts, setAllProducts] = useState([])
   const [persons, setPersons] = useState([])
   const [filters, setFilters] = useState({ from: '', to: '', user_id: '', product_id: '' })
   const [page, setPage] = useState(1)
@@ -1234,6 +1370,7 @@ function History({ user, ok }) {
     load()
     loadChart()
     api('/api/history/options').then(setOptions).catch(() => {})
+    api('/api/products').then((list) => setAllProducts(Array.isArray(list) ? list : [])).catch(() => setAllProducts([]))
     if (canEdit) api('/api/persons').then(setPersons).catch(() => setPersons([]))
   }, [])
 
@@ -1252,6 +1389,8 @@ function History({ user, ok }) {
       ? { quantity: toNum(editing.change_amount), from_person_id: editing.from_person_id || null, to_person_id: editing.to_person_id || null, trade_date: editing.trade_date || '', note: editing.note }
       : { amount: toNum(editing.change_amount), note: editing.note, person_id: editing.person_id || null, record_in_balance: !!editing.record_in_balance, trade_date: editing.trade_date || '' }
     if (editing.type === 'trade') body.unit_price = toNum(editing.unit_price)
+    // کالای انتخابشده هم ارسال میشود؛ رکوردهای سیستمی تسویه کالای خود را از معامله میگیرند
+    if (editing.type !== 'settlement' && editing.product_id) body.product_id = Number(editing.product_id)
     // تاریخ تسویه فقط برای رکوردهایی ارسال می‌شود که فیلدش نمایش داده شده است تا مقدار
     // رکوردهای تعدیلی دست‌نخورده بماند
     if (editing.type !== 'transfer' && showsSettlementDate(editing)) body.settlement_date = editing.settlement_date || ''
@@ -1300,6 +1439,11 @@ function History({ user, ok }) {
                             value={String(editing.change_amount ?? '')}
                             onChange={(v) => setEditing({ ...editing, change_amount: v })}
                           />
+                          {editing.type !== 'settlement' && (
+                            <select value={editing.product_id || ''} onChange={(e) => setEditing({ ...editing, product_id: e.target.value })}>
+                              {(allProducts.length ? allProducts : options.products).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                            </select>
+                          )}
                           {editing.type === 'transfer' ? (
                             <>
                               <PersonPicker value={editing.from_person_id || ''} onChange={(id) => setEditing({ ...editing, from_person_id: id })} placeholder="حواله از شخص" />
