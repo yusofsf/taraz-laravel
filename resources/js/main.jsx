@@ -1425,13 +1425,13 @@ function History({ user, ok }) {
       <div className="panel">
         <div className="panel-title"><span>ریز تغییرات</span><small>{fa(meta.total)} مورد</small></div>
         <table>
-          <thead><tr><th>تاریخ</th><th>کالا</th><th>شخص</th><th>کاربر</th><th>تغییر</th>{(canEdit || canDelete) && <th>عملیات</th>}</tr></thead>
+          <thead><tr><th>تاریخ</th><th>کالا</th><th>تسویه</th><th>شخص</th><th>کاربر</th><th>تغییر</th>{(canEdit || canDelete) && <th>عملیات</th>}</tr></thead>
           <tbody>
             {items.map((item) => (
               editing?.id === item.id
                 ? (
                     <tr key={item.id}>
-                      <td colSpan={canEdit || canDelete ? 6 : 5}>
+                      <td colSpan={canEdit || canDelete ? 7 : 6}>
                         <form className="form" onSubmit={saveEdit}>
                           <DecimalInput
                             required
@@ -1483,6 +1483,7 @@ function History({ user, ok }) {
                     <tr key={item.id}>
                       <td>{faPlain(effectiveJalali(item))}</td>
                       <td>{item.product?.name || '—'}</td>
+                      <td>{settlementLabel(item.settlement_method)}</td>
                       <td>{item.type === 'transfer' ? `از ${item.from_person?.name || '—'} به ${item.to_person?.name || '—'}` : item.type === 'delivery' ? `${item.person?.name || '—'} (تحویل)` : (item.person?.name || '—')}</td>
                       <td>{item.user?.name || '—'}</td>
                       <td className={item.type === 'transfer' ? '' : (item.change_amount > 0 ? 'up' : 'down')}>{item.type === 'transfer' ? fmt(item.change_amount) : `${item.change_amount > 0 ? '+' : ''}${fmt(item.change_amount)}`}</td>
@@ -1509,7 +1510,7 @@ function History({ user, ok }) {
                     </tr>
                   )
             ))}
-            {!items.length && <tr><td colSpan={canEdit || canDelete ? 6 : 5} className="empty-row">داده‌ای برای این فیلترها وجود ندارد.</td></tr>}
+            {!items.length && <tr><td colSpan={canEdit || canDelete ? 7 : 6} className="empty-row">داده‌ای برای این فیلترها وجود ندارد.</td></tr>}
           </tbody>
         </table>
         {meta.last_page > 1 && (
